@@ -1,0 +1,23 @@
+{
+  "name": "ai-revenue-recovery-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "build": "tsc --noEmit",
+    "db:verify": "tsx src/scripts/verifyDatabase.ts",
+    "db:seed": "tsx src/scripts/seedDatabase.ts",
+    "start": "NODE_ENV=production tsx src/server.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.0",
+    "express": "^4.22.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.1",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  }
+}
