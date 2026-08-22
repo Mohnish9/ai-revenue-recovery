@@ -4,6 +4,8 @@ import type {
   SandboxIncidentResponse,
   SandboxSimulationResult,
   Customer,
+  PageKey,
+  AutonomousStepResult,
 } from "../lib/types";
 import {
   fetchScenarioTypesApi,
@@ -12,22 +14,54 @@ import {
   createSandboxIncidentApi,
   analyzeSandboxIncidentApi,
   executeSandboxIncidentActionApi,
+  reassessSandboxIncidentApi,
+  escalateSandboxIncidentApi,
   deleteSandboxIncidentApi,
+  executeAutonomousStepApi,
+  runFullAutonomousLoopApi,
   fetchCustomers,
 } from "../lib/api";
 
 type ActiveTab = "INTELLIGENCE" | "MESSAGES" | "SUPABASE_CONTEXT" | "AUDIT_TRAIL";
 type MessageChannel = "WHATSAPP" | "SMS" | "EMAIL";
 
-export function RecoveryDemoPage() {
+interface RecoveryDemoPageProps {
+  onNavigate?: (page: PageKey) => void;
+}
+
+export function RecoveryDemoPage({ onNavigate }: RecoveryDemoPageProps) {
+  // Navigation helper
+  const navigateTo = (page: PageKey) => {
+    if (onNavigate) {
+      onNavigate(page);
+    } else {
+      window.history.pushState({}, "", `/${page}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }
+  };
+
   // Scenario types, Supabase customers, and persisted sandbox incidents
   const [scenarioTypes, setScenarioTypes] = useState<ScenarioTypeConfig[]>([]);
   const [supabaseCustomers, setSupabaseCustomers] = useState<Customer[]>([]);
   const [sandboxIncidentsList, setSandboxIncidentsList] = useState<SandboxIncidentResponse[]>([]);
   const [loadingInitial, setLoadingInitial] = useState<boolean>(true);
-  const [showIncidentsDrawer, setShowIncidentsDrawer] = useState<boolean>(false);
 
-  // Creation Form State
+  // Active Incident Workspace & Inspection
+  const [activeIncident, setActiveIncident] = useState<SandboxIncidentResponse | null>(null);
+  const [analyzingIncident, setAnalyzingIncident] = useState<boolean>(false);
+  const [incidentError, setIncidentError] = useState<string | null>(null);
+  const [executingAction, setExecutingAction] = useState<string | null>(null);
+  const [simulationResult, setSimulationResult] = useState<SandboxSimulationResult | null>(null);
+  const [reanalyzing, setReanalyzing] = useState<boolean>(false);
+  const [reanalysisPrompt, setReanalysisPrompt] = useState<string>("");
+
+  // Autonomous Recovery Loop State
+  const [runningAutonomousLoop, setRunningAutonomousLoop] = useState<boolean>(false);
+  const [loopNotice, setLoopNotice] = useState<string | null>(null);
+  const [loopTrace, setLoopTrace] = useState<AutonomousStepResult[]>([]);
+
+  // Creation Modal State
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [selectedTypeKey, setSelectedTypeKey] = useState<string>("insufficient-funds");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [isCustomCustomer, setIsCustomCustomer] = useState<boolean>(false);
@@ -41,22 +75,9 @@ export function RecoveryDemoPage() {
   const [failureCode, setFailureCode] = useState<string>("ERR_INSUFFICIENT_FUNDS_51");
   const [severity, setSeverity] = useState<"LOW" | "MEDIUM" | "HIGH" | "CRITICAL">("HIGH");
   const [billingContext, setBillingContext] = useState<string>(
-    "Primary credit card debited for monthly SaaS tier rejected with ERR_INSUFFICIENT_FUNDS during 04:00 AM automated batch debit. Customer has high historical LTV and active product engagement."
+    "Primary card rejected with ERR_INSUFFICIENT_FUNDS during 04:00 AM automated batch billing. Customer has high historical LTV and active product engagement."
   );
   const [customInstruction, setCustomInstruction] = useState<string>("");
-
-  // Incident & Agent Execution State
-  const [activeIncident, setActiveIncident] = useState<SandboxIncidentResponse | null>(null);
-  const [analyzingIncident, setAnalyzingIncident] = useState<boolean>(false);
-  const [incidentError, setIncidentError] = useState<string | null>(null);
-
-  // Simulation & Action Execution State
-  const [executingAction, setExecutingAction] = useState<string | null>(null);
-  const [simulationResult, setSimulationResult] = useState<SandboxSimulationResult | null>(null);
-
-  // Re-analysis state
-  const [reanalyzing, setReanalyzing] = useState<boolean>(false);
-  const [reanalysisPrompt, setReanalysisPrompt] = useState<string>("");
 
   // Workspace UI Tabs
   const [activeTab, setActiveTab] = useState<ActiveTab>("INTELLIGENCE");
@@ -91,7 +112,6 @@ export function RecoveryDemoPage() {
           setSelectedCustomerId(customers[0].id);
         }
 
-        // If there is already a persisted incident, load the most recent one
         if (incidents.length > 0) {
           setActiveIncident(incidents[0]);
         }
@@ -104,10 +124,12 @@ export function RecoveryDemoPage() {
     loadInitialData();
   }, []);
 
-  // When scenario type selection changes, populate smart defaults
-  const handleScenarioTypeSelect = (typeKey: string) => {
-    setSelectedTypeKey(typeKey);
-    const chosenType = scenarioTypes.find((t) => t.key === typeKey);
+  // Open creation modal pre-configured for a specific capability lab
+  const handleOpenCreateModal = (typeKey?: string) => {
+    const chosenKey = typeKey || selectedTypeKey || "insufficient-funds";
+    setSelectedTypeKey(chosenKey);
+
+    const chosenType = scenarioTypes.find((t) => t.key === chosenKey);
     if (chosenType) {
       setAmount(chosenType.suggestedAmount);
       setPaymentMethod(chosenType.defaultPaymentMethod);
@@ -115,6 +137,8 @@ export function RecoveryDemoPage() {
       setSeverity(chosenType.defaultSeverity);
       setBillingContext(chosenType.sampleBillingContext);
     }
+    setCustomInstruction("");
+    setShowCreateModal(true);
   };
 
   // Submit and create dynamic sandbox incident
@@ -130,14 +154,14 @@ export function RecoveryDemoPage() {
         customerId: isCustomCustomer ? undefined : selectedCustomerId,
         customerCustom: isCustomCustomer
           ? {
-              name: customName.trim() || "Sandbox Customer",
-              email: customEmail.trim() || "sandbox.customer@example.test",
+              name: customName.trim() || "Sandbox Enterprise Customer",
+              email: customEmail.trim() || "billing@enterprise.test",
               customer_type: customType,
             }
           : undefined,
         amount: Number(amount) || 5000,
         currency,
-        paymentMethod: paymentMethod.trim() || "Standard Card / Rail",
+        paymentMethod: paymentMethod.trim() || "Standard Payment Rail",
         failureCode: failureCode.trim() || "ERR_PAYMENT_DECLINE",
         severity,
         billingContext: billingContext.trim() || "Sandbox revenue incident created by operator.",
@@ -147,7 +171,14 @@ export function RecoveryDemoPage() {
       const result = await createSandboxIncidentApi(input);
       setActiveIncident(result);
       setActiveTab("INTELLIGENCE");
+      setShowCreateModal(false);
       await refreshIncidentsList();
+
+      // Scroll smoothly to the workspace
+      const el = document.getElementById("active-incident-workspace");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth" });
+      }
     } catch (err: any) {
       console.error("Failed to create and analyze sandbox incident:", err);
       setIncidentError(err?.message || "Failed to create sandbox incident with AI analysis");
@@ -156,1259 +187,1551 @@ export function RecoveryDemoPage() {
     }
   };
 
-  // Select an existing incident from the persisted store
+  // Select an existing incident to inspect
   const handleSelectIncident = async (id: string) => {
     try {
+      setAnalyzingIncident(true);
+      setIncidentError(null);
+      setSimulationResult(null);
       const inc = await fetchSandboxIncidentApi(id);
       setActiveIncident(inc);
-      setSimulationResult(null);
-      setShowIncidentsDrawer(false);
       setActiveTab("INTELLIGENCE");
-    } catch (err: any) {
-      console.error("Failed to fetch selected incident:", err);
-    }
-  };
 
-  // Delete an incident from the persisted store
-  const handleDeleteIncident = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    try {
-      await deleteSandboxIncidentApi(id);
-      if (activeIncident?.incident.id === id) {
-        setActiveIncident(null);
-        setSimulationResult(null);
+      const el = document.getElementById("active-incident-workspace");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth" });
       }
-      await refreshIncidentsList();
-    } catch (err) {
-      console.warn("Failed to delete incident:", err);
+    } catch (err: any) {
+      setIncidentError(err?.message || "Failed to load incident details");
+    } finally {
+      setAnalyzingIncident(false);
     }
   };
 
-  // Re-run AI analysis on the active incident (e.g. if key was just added or with new directive)
-  const handleReanalyzeWithAI = async () => {
+  // Re-run AI analysis on current incident
+  const handleTriggerAnalysis = async () => {
     if (!activeIncident) return;
     try {
       setReanalyzing(true);
       setIncidentError(null);
-      const updated = await analyzeSandboxIncidentApi(
-        activeIncident.incident.id,
-        reanalysisPrompt.trim() || undefined
-      );
-      setActiveIncident(updated);
+      const res = await analyzeSandboxIncidentApi(activeIncident.incident.id, reanalysisPrompt.trim() || undefined);
+      setActiveIncident(res);
       await refreshIncidentsList();
     } catch (err: any) {
-      console.error("Re-analysis failed:", err);
-      setIncidentError(err?.message || "AI Analysis failed to complete.");
+      setIncidentError(err?.message || "AI Analysis failed");
     } finally {
       setReanalyzing(false);
     }
   };
 
-  // Execute a sandbox recovery action
-  const handleExecuteAction = async (actionType: string, strategyName?: string) => {
+  // ONE-CLICK START: Autonomous Closed-Loop Recovery
+  const handleStartAutonomousRecovery = async () => {
     if (!activeIncident) return;
     try {
-      setExecutingAction(actionType);
-      const result = await executeSandboxIncidentActionApi(activeIncident.incident.id, {
-        actionType,
-        strategyName: strategyName || activeIncident.analysis.selectedStrategy,
-        reason: `Operator triggered action ${actionType} via Sandbox Recovery Studio`,
-        operatorInfo: { name: "Sandbox Operator", email: "operator@recoverly.test" },
-      });
+      setRunningAutonomousLoop(true);
+      setIncidentError(null);
+      setSimulationResult(null);
+      setLoopTrace([]);
 
-      setSimulationResult(result.simulation);
-      setActiveIncident(result.updatedIncident);
+      let isTerminal = false;
+      let stepCount = activeIncident.actions?.length || 0;
+      const maxSteps = 3;
+
+      while (!isTerminal && stepCount < maxSteps) {
+        stepCount++;
+        setLoopNotice(`Executing autonomous iteration #${stepCount} with Gemini AI reasoning...`);
+
+        const res = await executeAutonomousStepApi(activeIncident.incident.id, {
+          policyConfig: { maxAttempts: maxSteps },
+        });
+
+        setActiveIncident(res.incident);
+        setLoopTrace((prev) => [...prev, res.stepResult]);
+
+        if (res.stepResult.simulatedOutcome) {
+          setSimulationResult({
+            incidentId: activeIncident.incident.id,
+            actionName: res.stepResult.decidedAction?.actionTitle || res.stepResult.decidedAction?.selectedCapability || "SMART_RETRY",
+            status: res.stepResult.simulatedOutcome.isSettled ? "SIMULATION_SUCCESS" : "GATEWAY_DISPATCHED",
+            timestamp: new Date().toISOString(),
+            executedAt: new Date().toISOString(),
+            pspResponseCode: res.stepResult.simulatedOutcome.pspResponseCode || "AUTH_SUCCESS_200",
+            gatewayLatency: res.stepResult.simulatedOutcome.latency || "420ms",
+            telemetryNotes: res.stepResult.simulatedOutcome.observation || "Observed telemetry feedback.",
+            lifecycleUpdates: res.incident.lifecycle || [],
+            simulatedGatewayResponse: {
+              gatewayName: "Sandbox Simulated Rail (HDFC/Razorpay/UPI)",
+              authCode: res.stepResult.simulatedOutcome.isSettled ? "AUTH_RECOVERED_01" : "ACK_PENDING",
+              latencyMs: res.stepResult.simulatedOutcome.latency || "420ms",
+            },
+            projectedRecovery: activeIncident.incident.amount,
+            projectedRecoveredAmount: activeIncident.incident.amount,
+          });
+        }
+
+        if (res.stepResult.isTerminal) {
+          isTerminal = true;
+          break;
+        }
+
+        setLoopNotice(`Iteration #${stepCount} complete • Evaluating gateway telemetry before next cascade...`);
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+
       await refreshIncidentsList();
     } catch (err: any) {
-      console.error("Failed to execute action:", err);
-      setIncidentError(err?.message || "Failed to execute recovery action");
+      console.warn("Autonomous loop execution note:", err);
+      setIncidentError(err?.message || "Autonomous recovery loop failed");
+    } finally {
+      setRunningAutonomousLoop(false);
+      setLoopNotice(null);
+    }
+  };
+
+  // Instant Run Full Autonomous Loop
+  const handleRunFullLoopInstant = async () => {
+    if (!activeIncident) return;
+    try {
+      setRunningAutonomousLoop(true);
+      setIncidentError(null);
+      setSimulationResult(null);
+
+      const res = await runFullAutonomousLoopApi(activeIncident.incident.id, {
+        policyConfig: { maxAttempts: 3 },
+      });
+
+      setActiveIncident(res.incident);
+      setLoopTrace(res.trace);
+      await refreshIncidentsList();
+    } catch (err: any) {
+      setIncidentError(err?.message || "Failed to execute full loop");
+    } finally {
+      setRunningAutonomousLoop(false);
+    }
+  };
+
+  // Simulate Recommended or Selected Action
+  const handleSimulateAction = async (actionType?: string, strategyName?: string) => {
+    if (!activeIncident) return;
+    const targetAction = actionType || activeIncident.analysis?.recommendedAction || "SEND_PAYMENT_LINK";
+    const targetStrategy = strategyName || activeIncident.analysis?.selectedStrategy || "Autonomous Strategy";
+
+    try {
+      setExecutingAction(targetAction);
+      const res = await executeSandboxIncidentActionApi(activeIncident.incident.id, {
+        actionType: targetAction,
+        strategyName: targetStrategy,
+        reason: `Operator dispatched ${targetAction} in sandbox execution loop.`,
+        operatorInfo: { name: "Current Operator", email: "operator@recoverly.test" },
+      });
+
+      setSimulationResult(res.simulation);
+      setActiveIncident(res.updatedIncident);
+      await refreshIncidentsList();
+    } catch (err: any) {
+      alert(`Simulation failed: ${err.message}`);
     } finally {
       setExecutingAction(null);
     }
   };
 
-  // Reset to create a brand new incident
-  const handleResetToNewIncident = () => {
-    setActiveIncident(null);
-    setSimulationResult(null);
-    setIncidentError(null);
+  // Closed Loop Next Iteration: Reassess Telemetry with AI
+  const handleReassessLoop = async () => {
+    if (!activeIncident) return;
+    try {
+      setReanalyzing(true);
+      setIncidentError(null);
+      const res = await reassessSandboxIncidentApi(activeIncident.incident.id, {
+        customInstruction: reanalysisPrompt.trim() || undefined,
+      });
+      setActiveIncident(res);
+      await refreshIncidentsList();
+    } catch (err: any) {
+      setIncidentError(err?.message || "Reassessment failed");
+    } finally {
+      setReanalyzing(false);
+    }
   };
 
-  const selectedCustomerObj = isCustomCustomer
-    ? null
-    : supabaseCustomers.find((c) => c.id === selectedCustomerId) || supabaseCustomers[0];
+  // Escalate incident to human operations handoff
+  const handleEscalateToHuman = async () => {
+    if (!activeIncident) return;
+    const reason = prompt("Enter human escalation reason / directive:", "Operator requested manual VIP concierge handling");
+    if (reason === null) return;
 
-  const currentTypeConfig = scenarioTypes.find((t) => t.key === selectedTypeKey) || scenarioTypes[0];
+    try {
+      setAnalyzingIncident(true);
+      const res = await escalateSandboxIncidentApi(activeIncident.incident.id, {
+        reason: reason || "Operator manual escalation",
+        operatorName: "Revenue Operations Specialist",
+      });
+      setActiveIncident(res);
+      await refreshIncidentsList();
+    } catch (err: any) {
+      alert(`Escalation failed: ${err.message}`);
+    } finally {
+      setAnalyzingIncident(false);
+    }
+  };
 
-  const amountPresets = [2499, 4500, 7800, 14200, 25000, 50000];
+  // Delete an incident
+  const handleDeleteIncident = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!confirm(`Delete sandbox incident ${id}?`)) return;
+    try {
+      await deleteSandboxIncidentApi(id);
+      if (activeIncident?.incident.id === id) {
+        setActiveIncident(null);
+      }
+      await refreshIncidentsList();
+    } catch (err: any) {
+      alert(`Delete failed: ${err.message}`);
+    }
+  };
+
+  // Route to the corresponding operational page
+  const handleRouteToOperations = (scenarioKey: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (scenarioKey.includes("checkout") || scenarioKey === "checkout-abandonment") {
+      navigateTo("checkout-dropoffs");
+    } else if (scenarioKey.includes("subscription") || scenarioKey === "subscription-renewal-failure") {
+      navigateTo("subscriptions");
+    } else if (scenarioKey.includes("mandate") || scenarioKey === "upi-mandate-failure") {
+      navigateTo("mandates");
+    } else if (scenarioKey.includes("invoice") || scenarioKey === "overdue-invoice") {
+      navigateTo("invoices");
+    } else {
+      navigateTo("failed-payments");
+    }
+  };
+
+  // Route directly to AI Agent with incident pre-selected
+  const handleRouteToAIAgent = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    window.history.pushState({}, "", `/agent?caseId=${id}`);
+    navigateTo("agent");
+  };
+
+  // Dynamic global totals
+  const totalIncidentsCount = sandboxIncidentsList.length;
+  const totalRevenueAtRisk = sandboxIncidentsList.reduce(
+    (acc, item) => acc + Number(item.incident.amount || 0),
+    0
+  );
+  const totalRecoveredCount = sandboxIncidentsList.filter(
+    (i) => i.incident.status === "RECOVERED"
+  ).length;
 
   return (
-    <div className="page" id="recovery-demo-page">
-      {/* Page Header */}
-      <div className="page-heading" id="demo-page-heading">
+    <div className="page" style={{ maxWidth: "1600px", margin: "0 auto", paddingBottom: "80px" }}>
+      {/* Top Banner & Quick Overview */}
+      <div className="page-heading" style={{ marginBottom: "20px" }}>
         <div>
-          <div className="eyebrow">Autonomous Revenue Ops • Sandbox Studio</div>
-          <h1>Dynamic Revenue Incident Sandbox</h1>
-          <p>
-            Create, persist, and resolve dynamic sandbox revenue incidents across 9 payment disruption rails.
-            Grounded in real Supabase customer telemetry, analyzed by Gemini AI, and safely simulated with 0 production database mutations.
+          <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontWeight: 700, letterSpacing: "0.04em" }}>REVENUE RECOVERY LABS</span>
+            <span className="status-pill purple" style={{ fontSize: "10px", padding: "2px 8px" }}>
+              🧪 100% READ-ONLY SANDBOX • ZERO PROD IMPACT
+            </span>
+          </div>
+          <h1 style={{ fontSize: "24px", fontWeight: 800, marginTop: "4px", color: "#0f172a" }}>
+            Recovery Capability Labs
+          </h1>
+          <p style={{ color: "#64748b", fontSize: "13.5px", marginTop: "4px", maxWidth: "880px" }}>
+            Explore 9 isolated payment disruption capabilities. Create real runtime incidents, trigger autonomous Gemini AI reasoning, simulate multi-step recovery loops, and observe live telemetry with full cross-page synchronization.
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-          <div className="sandbox-tag-pill" id="sandbox-isolation-badge">
-            <span style={{ fontSize: "12px" }}>🔒</span>
-            <span>SANDBOX ISOLATION ACTIVE • NO PROD IMPACT</span>
-          </div>
-
+        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
           <button
-            className="outline-button"
-            id="toggle-incidents-list-btn"
-            onClick={() => setShowIncidentsDrawer(!showIncidentsDrawer)}
-            style={{ background: "#ffffff", borderColor: "#cbd5e1", fontSize: "12.5px" }}
+            onClick={() => handleOpenCreateModal()}
+            className="btn btn-primary"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "10px 18px",
+              fontWeight: 700,
+              boxShadow: "0 4px 12px rgba(99, 102, 241, 0.25)",
+            }}
           >
-            📋 Incidents List ({sandboxIncidentsList.length})
+            <span style={{ fontSize: "16px" }}>⚡</span>
+            <span>Create Sandbox Incident</span>
           </button>
-
-          {activeIncident ? (
-            <button
-              className="action-button"
-              id="new-incident-top-btn"
-              onClick={handleResetToNewIncident}
-              style={{ fontSize: "12.5px" }}
-            >
-              + Create New Incident
-            </button>
-          ) : null}
         </div>
       </div>
 
-      {/* Persisted Incidents List Drawer / Bar */}
-      {showIncidentsDrawer && (
-        <div
-          className="panel"
-          style={{ padding: "18px 22px", background: "#f8fafc", borderColor: "#cbd5e1", marginBottom: "20px" }}
-          id="persisted-incidents-drawer"
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-            <div>
-              <h3 style={{ fontSize: "14px", margin: 0, fontWeight: 800, color: "#172a34" }}>
-                Active Sandbox Incidents Store ({sandboxIncidentsList.length})
-              </h3>
-              <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
-                Persisted in sandbox storage across page navigation and tabs.
-              </p>
-            </div>
-            <button
-              className="preset-chip-btn"
-              onClick={() => setShowIncidentsDrawer(false)}
-              style={{ fontSize: "11px" }}
-            >
-              ✕ Close List
-            </button>
+      {/* Global Lab Metric Bar */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "14px",
+          marginBottom: "28px",
+        }}
+      >
+        <div className="stat-card" style={{ background: "#ffffff", border: "1px solid #e2e8f0", padding: "16px 20px" }}>
+          <div className="stat-label" style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>
+            SANDBOX INCIDENTS CREATED
           </div>
-
-          {sandboxIncidentsList.length === 0 ? (
-            <div style={{ padding: "16px", textAlign: "center", color: "#64748b", fontSize: "12px" }}>
-              No sandbox incidents created yet. Use the form below to create your first dynamic incident!
-            </div>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                gap: "10px",
-                maxHeight: "220px",
-                overflowY: "auto",
-              }}
-            >
-              {sandboxIncidentsList.map((inc) => {
-                const isSelected = activeIncident?.incident.id === inc.incident.id;
-                return (
-                  <div
-                    key={inc.incident.id}
-                    onClick={() => handleSelectIncident(inc.incident.id)}
-                    style={{
-                      padding: "10px 14px",
-                      background: isSelected ? "#eff6ff" : "#ffffff",
-                      border: isSelected ? "2px solid #0284c7" : "1px solid #e2e8f0",
-                      borderRadius: "8px",
-                      cursor: "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "4px",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: "11px", fontWeight: 700, color: "#0284c7" }}>
-                        {inc.incident.id}
-                      </span>
-                      <span
-                        className={`status-pill ${
-                          inc.incident.status === "ACTION_SIMULATED" || inc.incident.status === "RECOVERED"
-                            ? "success"
-                            : inc.incident.status === "ANALYZED"
-                            ? "info"
-                            : "warning"
-                        }`}
-                        style={{ fontSize: "9.5px", padding: "1px 6px" }}
-                      >
-                        {inc.incident.status}
-                      </span>
-                    </div>
-                    <div style={{ fontWeight: 700, fontSize: "12px", color: "#1e293b" }}>
-                      {inc.customer.name} • ₹{inc.incident.amount.toLocaleString()} {inc.incident.currency}
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "#64748b" }}>
-                      <span>{inc.incident.scenarioTypeName}</span>
-                      <button
-                        onClick={(e) => handleDeleteIncident(e, inc.incident.id)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: "#ef4444",
-                          cursor: "pointer",
-                          fontSize: "11px",
-                          padding: "2px 4px",
-                        }}
-                        title="Delete Incident"
-                      >
-                        🗑
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {loadingInitial ? (
-        <div className="loading-container" id="sandbox-initial-loading">
-          <div className="spinner"></div>
-          <span>Initializing dynamic sandbox engine and grounding Supabase customer context...</span>
-        </div>
-      ) : !activeIncident ? (
-        /* ========================================================================= */
-        /* STATE A: CREATE REVENUE INCIDENT FORM                                     */
-        /* ========================================================================= */
-        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }} id="incident-creation-workspace">
-          {/* Step 1: Select Scenario Type (9 Types) */}
-          <div className="panel" style={{ padding: "20px 24px" }} id="scenario-type-selection-panel">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-              <div>
-                <h2 style={{ fontSize: "15px", margin: 0, color: "#172a34", fontWeight: 800 }}>
-                  1. Choose Revenue Disruption Scenario Type (9 Rails)
-                </h2>
-                <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
-                  Select the failure archetype. Smart parameters will auto-fill below for instant customization or launch.
-                </p>
-              </div>
-              <span className="status-pill info">9 Supported Types</span>
-            </div>
-
-            <div className="sandbox-type-grid" id="scenario-types-grid">
-              {scenarioTypes.map((type) => {
-                const isSelected = type.key === selectedTypeKey;
-                return (
-                  <div
-                    key={type.key}
-                    id={`type-card-${type.key}`}
-                    className={`sandbox-type-card ${isSelected ? "selected" : ""}`}
-                    onClick={() => handleScenarioTypeSelect(type.key)}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
-                      <span className={`status-pill ${type.defaultSeverity === "CRITICAL" ? "danger" : type.defaultSeverity === "HIGH" ? "warning" : "info"}`}>
-                        {type.defaultSeverity}
-                      </span>
-                      <span className="status-pill purple" style={{ fontSize: "9px" }}>{type.category}</span>
-                    </div>
-                    <div style={{ fontWeight: 800, fontSize: "13px", color: "#172a34", marginBottom: "4px" }}>
-                      {type.name}
-                    </div>
-                    <p style={{ fontSize: "11px", color: "#64748b", margin: "0 0 10px", lineHeight: "15px" }}>
-                      {type.description}
-                    </p>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f1f5f9", paddingTop: "8px", fontSize: "10.5px" }}>
-                      <span style={{ color: "#0284c7", fontWeight: 600 }}>{type.defaultChannel}</span>
-                      <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color: "#475569" }}>
-                        ₹{type.suggestedAmount.toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          <div className="stat-value" style={{ fontSize: "26px", fontWeight: 800, color: "#1e293b", marginTop: "4px" }}>
+            {totalIncidentsCount}
           </div>
+          <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+            Across 9 capability labs
+          </div>
+        </div>
 
-          {/* Step 2 & 3: Customer Context & Incident Parameters */}
-          <form onSubmit={handleCreateIncident} id="incident-parameters-form">
-            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.3fr", gap: "20px" }}>
-              {/* Left Column: Customer Grounding */}
-              <div className="panel" style={{ padding: "20px 24px" }} id="customer-grounding-panel">
-                <div style={{ marginBottom: "16px" }}>
-                  <h2 style={{ fontSize: "15px", margin: 0, color: "#172a34", fontWeight: 800 }}>
-                    2. Select Customer (Supabase Ground Truth)
-                  </h2>
-                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
-                    Gemini AI will fetch this customer's actual historical invoices, subscriptions, and transaction ledger.
-                  </p>
-                </div>
+        <div className="stat-card" style={{ background: "#ffffff", border: "1px solid #e2e8f0", padding: "16px 20px" }}>
+          <div className="stat-label" style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>
+            TOTAL REVENUE AT RISK (SANDBOX)
+          </div>
+          <div className="stat-value" style={{ fontSize: "26px", fontWeight: 800, color: "#0ea5e9", marginTop: "4px" }}>
+            ₹{totalRevenueAtRisk.toLocaleString()}
+          </div>
+          <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+            100% safe read-only simulation
+          </div>
+        </div>
 
-                <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
-                  <button
-                    type="button"
-                    className={`preset-chip-btn ${!isCustomCustomer ? "active" : ""}`}
-                    onClick={() => setIsCustomCustomer(false)}
-                    id="select-existing-customer-btn"
-                  >
-                    Select Supabase Account
-                  </button>
-                  <button
-                    type="button"
-                    className={`preset-chip-btn ${isCustomCustomer ? "active" : ""}`}
-                    onClick={() => setIsCustomCustomer(true)}
-                    id="enter-custom-customer-btn"
-                  >
-                    + Custom Customer Input
-                  </button>
-                </div>
+        <div className="stat-card" style={{ background: "#ffffff", border: "1px solid #e2e8f0", padding: "16px 20px" }}>
+          <div className="stat-label" style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>
+            RECOVERED / SETTLED (SIMULATED)
+          </div>
+          <div className="stat-value" style={{ fontSize: "26px", fontWeight: 800, color: "#10b981", marginTop: "4px" }}>
+            {totalRecoveredCount} / {totalIncidentsCount}
+          </div>
+          <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+            Closed-loop autonomous settlements
+          </div>
+        </div>
 
-                {!isCustomCustomer ? (
+        <div className="stat-card" style={{ background: "#ffffff", border: "1px solid #e2e8f0", padding: "16px 20px" }}>
+          <div className="stat-label" style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>
+            AI AGENT STATUS
+          </div>
+          <div className="stat-value" style={{ fontSize: "20px", fontWeight: 800, color: "#8b5cf6", marginTop: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", background: "#10b981" }}></span>
+            Bounded Agentic Active
+          </div>
+          <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+            Max 3 Loops • Guardrail Protected
+          </div>
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* 9 DISTINCT PROBLEM CAPABILITY LABS SECTION */}
+      {/* ------------------------------------------------------------- */}
+      <div style={{ marginBottom: "36px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div>
+            <h2 style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
+              Autonomous Problem Labs
+            </h2>
+            <p style={{ fontSize: "12.5px", color: "#64748b", margin: "2px 0 0" }}>
+              Each section represents a specialized recovery capability. Create a runtime incident to test the end-to-end autonomous flow.
+            </p>
+          </div>
+        </div>
+
+        {loadingInitial ? (
+          <div style={{ padding: "40px", textAlign: "center", color: "#64748b", background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+            Loading capability labs...
+          </div>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(440px, 1fr))",
+              gap: "20px",
+            }}
+          >
+            {scenarioTypes.map((type, index) => {
+              const labIncidents = sandboxIncidentsList.filter(
+                (item) => item.incident.scenarioTypeKey === type.key
+              );
+              const labRiskSum = labIncidents.reduce(
+                (sum, item) => sum + Number(item.incident.amount || 0),
+                0
+              );
+              const hasIncidents = labIncidents.length > 0;
+
+              return (
+                <div
+                  key={type.key}
+                  style={{
+                    background: "#ffffff",
+                    border: hasIncidents ? "1.5px solid #cbd5e1" : "1px dashed #cbd5e1",
+                    borderRadius: "12px",
+                    padding: "20px",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "space-between",
+                    boxShadow: hasIncidents ? "0 2px 8px rgba(0,0,0,0.03)" : "none",
+                    transition: "all 0.15s ease",
+                  }}
+                >
                   <div>
-                    <label className="field-label" htmlFor="customer-select">
-                      Customer Profile:
-                    </label>
-                    <select
-                      id="customer-select"
-                      className="text-input"
-                      value={selectedCustomerId}
-                      onChange={(e) => setSelectedCustomerId(e.target.value)}
-                      style={{ marginBottom: "16px" }}
-                    >
-                      {supabaseCustomers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} ({c.email}) — {c.customer_type || "INDIVIDUAL"}
-                        </option>
-                      ))}
-                    </select>
-
-                    {selectedCustomerObj && (
-                      <div
-                        style={{
-                          background: "#f8fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "8px",
-                          padding: "14px",
-                          fontSize: "12px",
-                        }}
-                        id="selected-customer-preview-box"
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                          <strong style={{ color: "#1e293b" }}>{selectedCustomerObj.name}</strong>
-                          <span className="status-pill neutral">{selectedCustomerObj.customer_type || "INDIVIDUAL"}</span>
-                        </div>
-                        <div style={{ color: "#64748b", fontSize: "11.5px", marginBottom: "4px" }}>
-                          Email: {selectedCustomerObj.email}
-                        </div>
-                        <div style={{ color: "#64748b", fontSize: "11.5px" }}>
-                          Supabase ID: <span style={{ fontFamily: "'DM Mono', monospace" }}>{selectedCustomerObj.id}</span>
-                        </div>
-                        <div
+                    {/* Lab Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <span
                           style={{
-                            marginTop: "10px",
-                            paddingTop: "8px",
-                            borderTop: "1px dashed #cbd5e1",
-                            fontSize: "11px",
-                            color: "#0284c7",
-                            fontWeight: 600,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: "32px",
+                            height: "32px",
+                            borderRadius: "8px",
+                            background: "#f1f5f9",
+                            fontSize: "14px",
+                            fontWeight: 800,
+                            color: "#475569",
                           }}
                         >
-                          ✓ Connected to live Supabase ledger & payment telemetry
+                          {index + 1}
+                        </span>
+                        <div>
+                          <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a", margin: 0 }}>
+                            {type.name}
+                          </h3>
+                          <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                            Category: <strong style={{ color: "#334155" }}>{type.category}</strong> • Default Rail: {type.defaultPaymentMethod.split(" ")[0]}
+                          </div>
                         </div>
+                      </div>
+
+                      <span
+                        className={`status-pill ${
+                          type.category === "CARD"
+                            ? "blue"
+                            : type.category === "UPI"
+                            ? "purple"
+                            : type.category === "INVOICE"
+                            ? "amber"
+                            : "info"
+                        }`}
+                        style={{ fontSize: "9.5px", padding: "2px 7px" }}
+                      >
+                        {type.tag}
+                      </span>
+                    </div>
+
+                    {/* Explanation */}
+                    <p style={{ fontSize: "12px", color: "#475569", lineHeight: "1.45", margin: "8px 0 14px" }}>
+                      {type.description}
+                    </p>
+
+                    {/* Dynamic Lab Counters */}
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "16px",
+                        padding: "8px 12px",
+                        background: "#f8fafc",
+                        borderRadius: "8px",
+                        marginBottom: "14px",
+                        border: "1px solid #f1f5f9",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                          Incidents
+                        </div>
+                        <div style={{ fontSize: "13.5px", fontWeight: 800, color: hasIncidents ? "#0f172a" : "#94a3b8" }}>
+                          {labIncidents.length} Active
+                        </div>
+                      </div>
+                      <div style={{ borderLeft: "1px solid #e2e8f0", paddingLeft: "14px" }}>
+                        <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                          Revenue at Risk
+                        </div>
+                        <div style={{ fontSize: "13.5px", fontWeight: 800, color: hasIncidents ? "#0284c7" : "#94a3b8" }}>
+                          ₹{labRiskSum.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Incident List or Empty State */}
+                    {!hasIncidents ? (
+                      <div
+                        style={{
+                          padding: "20px 14px",
+                          textAlign: "center",
+                          background: "#fafafa",
+                          borderRadius: "8px",
+                          border: "1px dashed #e2e8f0",
+                          marginBottom: "14px",
+                        }}
+                      >
+                        <div style={{ fontSize: "12px", color: "#64748b", fontWeight: 500 }}>
+                          No sandbox incidents created yet.
+                        </div>
+                        <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>
+                          Click below to instantiate a runtime test incident for this capability.
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "14px", maxHeight: "240px", overflowY: "auto" }}>
+                        {labIncidents.map((sb) => {
+                          const isSelected = activeIncident?.incident.id === sb.incident.id;
+                          return (
+                            <div
+                              key={sb.incident.id}
+                              onClick={() => handleSelectIncident(sb.incident.id)}
+                              style={{
+                                padding: "10px 12px",
+                                borderRadius: "8px",
+                                background: isSelected ? "#eff6ff" : "#ffffff",
+                                border: isSelected ? "1.5px solid #3b82f6" : "1px solid #e2e8f0",
+                                cursor: "pointer",
+                                transition: "all 0.1s ease",
+                              }}
+                            >
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                  <span style={{ fontSize: "11px", fontWeight: 800, color: "#1e293b" }}>
+                                    {sb.incident.id}
+                                  </span>
+                                  <span
+                                    className={`status-pill ${
+                                      sb.incident.status === "RECOVERED"
+                                        ? "success"
+                                        : sb.incident.status === "ESCALATED_TO_HUMAN"
+                                        ? "danger"
+                                        : sb.incident.status === "ACTION_SIMULATED"
+                                        ? "purple"
+                                        : "info"
+                                    }`}
+                                    style={{ fontSize: "9px", padding: "1px 6px" }}
+                                  >
+                                    {sb.incident.status || "OPEN"}
+                                  </span>
+                                </div>
+                                <span style={{ fontSize: "12px", fontWeight: 800, color: "#0f172a" }}>
+                                  ₹{Number(sb.incident.amount).toLocaleString()}
+                                </span>
+                              </div>
+
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px" }}>
+                                <div style={{ fontSize: "11px", color: "#475569" }}>
+                                  <strong>{sb.customer.name}</strong> ({sb.customer.email})
+                                </div>
+                                <div style={{ display: "flex", gap: "4px" }}>
+                                  <button
+                                    onClick={(e) => handleRouteToAIAgent(sb.incident.id, e)}
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ fontSize: "9.5px", padding: "2px 6px" }}
+                                    title="Open in AI Agent Studio"
+                                  >
+                                    AI Agent ↗
+                                  </button>
+                                  <button
+                                    onClick={(e) => handleDeleteIncident(sb.incident.id, e)}
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ fontSize: "9.5px", padding: "2px 6px", color: "#ef4444" }}
+                                    title="Delete incident"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                    <div>
-                      <label className="field-label" htmlFor="custom-customer-name">
-                        Customer Full Name:
-                      </label>
-                      <input
-                        id="custom-customer-name"
-                        type="text"
-                        className="text-input"
-                        placeholder="e.g. Priya Sharma"
-                        value={customName}
-                        onChange={(e) => setCustomName(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="field-label" htmlFor="custom-customer-email">
-                        Customer Email Address:
-                      </label>
-                      <input
-                        id="custom-customer-email"
-                        type="email"
-                        className="text-input"
-                        placeholder="e.g. priya.sharma@example.test"
-                        value={customEmail}
-                        onChange={(e) => setCustomEmail(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="field-label" htmlFor="custom-customer-type">
-                        Account Tier:
-                      </label>
-                      <select
-                        id="custom-customer-type"
-                        className="text-input"
-                        value={customType}
-                        onChange={(e) => setCustomType(e.target.value)}
-                      >
-                        <option value="INDIVIDUAL">INDIVIDUAL (B2C)</option>
-                        <option value="BUSINESS">BUSINESS (SMB)</option>
-                        <option value="ENTERPRISE">ENTERPRISE (B2B)</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
-              </div>
 
-              {/* Right Column: Financial & Technical Parameters */}
-              <div className="panel" style={{ padding: "20px 24px" }} id="incident-parameters-panel">
-                <div style={{ marginBottom: "16px" }}>
-                  <h2 style={{ fontSize: "15px", margin: 0, color: "#172a34", fontWeight: 800 }}>
-                    3. Incident Parameters & Disruption Rail
-                  </h2>
-                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
-                    Tune the amount at risk, payment method, failure code, and situational notes.
-                  </p>
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                  {/* Amount at Risk & Currency */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "12px" }}>
-                    <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                        <label className="field-label" htmlFor="incident-amount" style={{ margin: 0 }}>
-                          Amount at Risk:
-                        </label>
-                        <div style={{ display: "flex", gap: "4px" }}>
-                          {amountPresets.slice(0, 3).map((p) => (
-                            <button
-                              key={p}
-                              type="button"
-                              className={`preset-chip-btn ${amount === p ? "active" : ""}`}
-                              onClick={() => setAmount(p)}
-                              style={{ padding: "1px 5px", fontSize: "9.5px" }}
-                            >
-                              ₹{p}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <input
-                        id="incident-amount"
-                        type="number"
-                        className="text-input"
-                        value={amount}
-                        onChange={(e) => setAmount(Number(e.target.value))}
-                        min="10"
-                        step="1"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="field-label" htmlFor="incident-currency">
-                        Currency:
-                      </label>
-                      <select
-                        id="incident-currency"
-                        className="text-input"
-                        value={currency}
-                        onChange={(e) => setCurrency(e.target.value)}
-                      >
-                        <option value="INR">INR (₹)</option>
-                        <option value="USD">USD ($)</option>
-                        <option value="EUR">EUR (€)</option>
-                        <option value="GBP">GBP (£)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Payment Method & Severity */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "12px" }}>
-                    <div>
-                      <label className="field-label" htmlFor="incident-payment-method">
-                        Payment Method / Rail:
-                      </label>
-                      <input
-                        id="incident-payment-method"
-                        type="text"
-                        className="text-input"
-                        value={paymentMethod}
-                        onChange={(e) => setPaymentMethod(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="field-label" htmlFor="incident-severity">
-                        Severity:
-                      </label>
-                      <select
-                        id="incident-severity"
-                        className="text-input"
-                        value={severity}
-                        onChange={(e) => setSeverity(e.target.value as any)}
-                      >
-                        <option value="LOW">LOW</option>
-                        <option value="MEDIUM">MEDIUM</option>
-                        <option value="HIGH">HIGH</option>
-                        <option value="CRITICAL">CRITICAL</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Failure Code */}
-                  <div>
-                    <label className="field-label" htmlFor="incident-failure-code">
-                      Gateway Disruption / Decline Code:
-                    </label>
-                    <input
-                      id="incident-failure-code"
-                      type="text"
-                      className="text-input"
-                      style={{ fontFamily: "'DM Mono', monospace", fontSize: "12px" }}
-                      value={failureCode}
-                      onChange={(e) => setFailureCode(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  {/* Billing Context */}
-                  <div>
-                    <label className="field-label" htmlFor="incident-billing-context">
-                      Operational & Billing Context:
-                    </label>
-                    <textarea
-                      id="incident-billing-context"
-                      className="text-input"
-                      rows={2}
-                      value={billingContext}
-                      onChange={(e) => setBillingContext(e.target.value)}
-                      placeholder="Describe the failure context..."
-                      required
-                    />
-                  </div>
-
-                  {/* Operator AI Directive */}
-                  <div>
-                    <label className="field-label" htmlFor="incident-operator-prompt">
-                      Operator Directive for Gemini AI (Optional):
-                    </label>
-                    <input
-                      id="incident-operator-prompt"
-                      type="text"
-                      className="text-input"
-                      placeholder="e.g. Recommend an instant WhatsApp UPI intent fallback with polite urgency..."
-                      value={customInstruction}
-                      onChange={(e) => setCustomInstruction(e.target.value)}
-                    />
+                  {/* Lab Footer Actions */}
+                  <div style={{ display: "flex", gap: "8px", paddingTop: "10px", borderTop: "1px solid #f1f5f9" }}>
+                    <button
+                      onClick={() => handleOpenCreateModal(type.key)}
+                      className="btn btn-primary btn-sm"
+                      style={{ flex: 1, display: "flex", justifyContent: "center", alignItems: "center", gap: "6px", fontWeight: 600 }}
+                    >
+                      <span>+</span>
+                      <span>{hasIncidents ? "Create Another Incident" : "Create Incident"}</span>
+                    </button>
+                    <button
+                      onClick={(e) => handleRouteToOperations(type.key, e)}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: "11px", padding: "6px 10px" }}
+                      title="Open dedicated operational queue"
+                    >
+                      Operations ↗
+                    </button>
                   </div>
                 </div>
-              </div>
-            </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-            {/* Launch Action Bar */}
-            <div
-              style={{
-                marginTop: "20px",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                background: "#ffffff",
-                border: "1px solid #e2e8f0",
-                borderRadius: "10px",
-                padding: "16px 24px",
-              }}
-              id="create-incident-action-bar"
-            >
-              <div>
-                <div style={{ fontWeight: 800, fontSize: "14px", color: "#172a34" }}>
-                  Ready to Ingest Sandbox Incident
-                </div>
-                <div style={{ fontSize: "12px", color: "#64748b" }}>
-                  Generates unique ID • Bounded Agent Lifecycle • Real Supabase Grounding • Read-Only
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="action-button"
-                id="submit-create-incident-btn"
-                disabled={analyzingIncident}
-                style={{ minWidth: "260px", padding: "12px 24px", fontSize: "13px" }}
-              >
-                {analyzingIncident ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                    <span className="spinner" style={{ width: "14px", height: "14px" }}></span>
-                    Synthesizing with Gemini AI...
-                  </span>
-                ) : (
-                  "✦ Create Incident & Run Autonomous Agent"
-                )}
-              </button>
-            </div>
-          </form>
-
-          {incidentError && (
-            <div className="error-banner" id="incident-creation-error">
-              <strong>Notice:</strong> {incidentError}
-            </div>
-          )}
-        </div>
-      ) : (
-        /* ========================================================================= */
-        /* STATE B: LIVE INCIDENT WORKSPACE & BOUNDED AGENT EXECUTION HUB           */
-        /* ========================================================================= */
-        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }} id="active-incident-workspace">
-          {/* Prominent Sandbox Isolation Banner */}
-          <div className="sandbox-hero-banner" id="sandbox-active-banner">
+      {/* ------------------------------------------------------------- */}
+      {/* ACTIVE INCIDENT WORKSPACE & CLOSED-LOOP AI AGENT STUDIO */}
+      {/* ------------------------------------------------------------- */}
+      {activeIncident && (
+        <div
+          id="active-incident-workspace"
+          style={{
+            background: "#ffffff",
+            border: "1.5px solid #cbd5e1",
+            borderRadius: "14px",
+            padding: "24px",
+            boxShadow: "0 10px 25px rgba(0, 0, 0, 0.05)",
+            marginBottom: "36px",
+          }}
+        >
+          {/* Header Banner */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              borderBottom: "1px solid #e2e8f0",
+              paddingBottom: "16px",
+              marginBottom: "20px",
+            }}
+          >
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", flexWrap: "wrap" }}>
-                <span className="sandbox-tag-pill">{activeIncident.incident.label}</span>
-                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: "11px", color: "#94a3b8" }}>
-                  ID: {activeIncident.incident.id}
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                <span style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>
+                  Active Incident: {activeIncident.incident.id}
                 </span>
-                <span className={`status-pill ${activeIncident.incident.severity === "CRITICAL" ? "danger" : "warning"}`}>
-                  {activeIncident.incident.severity} SEVERITY
+                <span className="status-pill purple" style={{ fontSize: "10px", padding: "2px 8px" }}>
+                  🧪 SANDBOX INCIDENT
                 </span>
                 <span
                   className={`status-pill ${
-                    activeIncident.incident.status === "ACTION_SIMULATED" || activeIncident.incident.status === "RECOVERED"
+                    activeIncident.incident.status === "RECOVERED"
                       ? "success"
+                      : activeIncident.incident.status === "ESCALATED_TO_HUMAN"
+                      ? "danger"
+                      : activeIncident.incident.status === "ACTION_SIMULATED"
+                      ? "purple"
                       : "info"
                   }`}
+                  style={{ fontSize: "10px", padding: "2px 8px" }}
                 >
-                  STATUS: {activeIncident.incident.status}
+                  {activeIncident.incident.status || "OPEN"}
                 </span>
               </div>
-              <h2 style={{ fontSize: "18px", margin: "2px 0 4px", color: "#ffffff", fontWeight: 800 }}>
-                {activeIncident.incident.scenarioTypeName} • {activeIncident.customer.name}
-              </h2>
-              <p style={{ fontSize: "12px", color: "#cbd5e1", margin: 0 }}>
-                Rail: <strong style={{ color: "#ffffff" }}>{activeIncident.incident.paymentMethod}</strong> • Decline:{" "}
-                <code style={{ color: "#fca5a5" }}>{activeIncident.incident.failureCode}</code> • Amount:{" "}
-                <strong style={{ color: "#d6f36b" }}>₹{activeIncident.incident.amount.toLocaleString()} {activeIncident.incident.currency}</strong>
-              </p>
+
+              <div style={{ fontSize: "12.5px", color: "#475569", display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                <div>
+                  <strong>Capability:</strong> {activeIncident.incident.scenarioTypeName}
+                </div>
+                <div>
+                  <strong>Customer:</strong> {activeIncident.customer.name} ({activeIncident.customer.email})
+                </div>
+                <div>
+                  <strong>Amount at Risk:</strong> <span style={{ color: "#0284c7", fontWeight: 700 }}>₹{Number(activeIncident.incident.amount).toLocaleString()} {activeIncident.incident.currency}</span>
+                </div>
+                <div>
+                  <strong>Disruption Code:</strong> <code>{activeIncident.incident.failureCode}</code>
+                </div>
+              </div>
             </div>
 
-            <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "8px" }}>
               <button
-                className="outline-button"
-                id="reset-incident-top-btn"
-                onClick={handleResetToNewIncident}
-                style={{ color: "#ffffff", borderColor: "#475569", background: "rgba(255,255,255,0.06)", fontSize: "12px" }}
+                onClick={(e) => handleRouteToAIAgent(activeIncident.incident.id, e)}
+                className="btn btn-secondary btn-sm"
+                style={{ fontWeight: 600 }}
               >
-                + New Incident
+                Inspect in AI Agent Page ↗
               </button>
               <button
-                className="action-button"
-                id="simulate-recovery-action-btn"
-                onClick={() =>
-                  handleExecuteAction(
-                    activeIncident.analysis.recommendedAction || "SMART_RETRY",
-                    activeIncident.analysis.selectedStrategy
-                  )
-                }
-                disabled={executingAction !== null}
-                style={{
-                  background: simulationResult ? "#059669" : "#0284c7",
-                  borderColor: simulationResult ? "#059669" : "#0284c7",
-                  color: "#ffffff",
-                  fontSize: "12px",
-                }}
+                onClick={(e) => handleRouteToOperations(activeIncident.incident.scenarioTypeKey, e)}
+                className="btn btn-secondary btn-sm"
+                style={{ fontWeight: 600 }}
               >
-                {executingAction ? (
-                  <span>⚡ Dispatching Acquirer Simulation...</span>
-                ) : simulationResult ? (
-                  "✓ Simulation Dispatched (Re-run)"
-                ) : (
-                  "⚡ Run Sandbox Recovery Simulation"
-                )}
+                Open in Operations ↗
               </button>
             </div>
           </div>
 
-          {/* 6-Stage Bounded Agent Lifecycle Stepper */}
-          <div className="panel" style={{ padding: "18px 20px" }} id="agent-lifecycle-stepper-panel">
+          {/* Bounded Agentic Loop Stepper */}
+          <div
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: "10px",
+              padding: "16px 20px",
+              marginBottom: "22px",
+            }}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <h3 style={{ fontSize: "13px", margin: 0, fontWeight: 800, color: "#1e293b" }}>
-                Bounded Agent Execution Loop (6-Stage Pipeline)
-              </h3>
-              <span className="api-status ready">
-                <i></i>
-                <span>SANDBOX RUNTIME ACTIVE</span>
-              </span>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Bounded Autonomous Agent Lifecycle (Loop Iteration: {activeIncident.actions?.length || 0} / 3)
+              </div>
+              <div style={{ fontSize: "11px", color: "#475569" }}>
+                Safety Guardrail: <strong style={{ color: "#10b981" }}>Auto-escalates if &gt;3 attempts</strong>
+              </div>
             </div>
 
-            <div className="agent-stepper" id="six-stage-stepper">
-              {activeIncident.lifecycle.map((stepItem, idx) => {
-                const isDone = stepItem.status === "COMPLETED";
-                const isActive = stepItem.status === "ACTIVE";
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                gap: "10px",
+              }}
+            >
+              {[
+                { key: "DETECT", label: "1. Detect & Anomaly", icon: "🔍" },
+                { key: "ANALYZE", label: "2. Grounded Telemetry", icon: "🧠" },
+                { key: "DECIDE", label: "3. Gemini Strategy", icon: "⚡" },
+                { key: "ACT_SIMULATE", label: "4. Simulate Action", icon: "🚀" },
+                { key: "OBSERVE", label: "5. Gateway Feedback", icon: "📡" },
+                { key: "AUDIT", label: "6. Immutable Audit", icon: "🔒" },
+              ].map((step) => {
+                const isCompleted = activeIncident.lifecycle?.some((l) => l.step === step.key && l.status === "COMPLETED");
+                const isActive = activeIncident.lifecycle?.some((l) => l.step === step.key && l.status === "ACTIVE");
+
                 return (
                   <div
-                    key={stepItem.step}
-                    id={`lifecycle-step-${stepItem.step.toLowerCase()}`}
-                    className={`stepper-step ${isDone ? "completed" : isActive ? "active" : "pending"}`}
+                    key={step.key}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: "8px",
+                      background: isCompleted ? "#f0fdf4" : isActive ? "#eff6ff" : "#ffffff",
+                      border: isCompleted ? "1.5px solid #86efac" : isActive ? "1.5px solid #93c5fd" : "1px solid #e2e8f0",
+                    }}
                   >
-                    <div className="stepper-step-header">
-                      <div className="stepper-circle">
-                        {isDone ? "✓" : idx + 1}
-                      </div>
-                      <span className="stepper-name">{stepItem.step}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 700, color: isCompleted ? "#166534" : isActive ? "#1e40af" : "#64748b" }}>
+                      <span>{step.icon}</span>
+                      <span>{step.label}</span>
                     </div>
-                    <div className="stepper-title">{stepItem.title}</div>
-                    <div className="stepper-desc">{stepItem.detail}</div>
+                    <div style={{ fontSize: "10px", color: isCompleted ? "#15803d" : isActive ? "#2563eb" : "#94a3b8", marginTop: "2px" }}>
+                      {isCompleted ? "✓ Verified" : isActive ? "● In Progress" : "Pending"}
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Workspace Tabs Bar */}
-          <div className="panel" id="incident-workspace-panel">
-            <div className="demo-tabs-bar" id="workspace-tabs-bar">
-              <button
-                className={`demo-tab-item ${activeTab === "INTELLIGENCE" ? "active" : ""}`}
-                onClick={() => setActiveTab("INTELLIGENCE")}
-                id="tab-intelligence-btn"
-              >
-                <span>🧠</span>
-                <span>AI Recovery Intelligence & Evidence</span>
-              </button>
+          {/* Human Escalation Alert Panel (if escalated) */}
+          {activeIncident.incident.status === "ESCALATED_TO_HUMAN" && (
+            <div
+              style={{
+                background: "#fef2f2",
+                border: "1.5px solid #f87171",
+                borderRadius: "10px",
+                padding: "18px 20px",
+                marginBottom: "22px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                <span style={{ fontSize: "18px" }}>🛑</span>
+                <h3 style={{ fontSize: "15px", fontWeight: 800, color: "#991b1b", margin: 0 }}>
+                  Autonomous Agent Halted • Human Handoff Active
+                </h3>
+              </div>
+              <p style={{ fontSize: "12.5px", color: "#7f1d1d", margin: "0 0 10px", lineHeight: "1.4" }}>
+                <strong>Reason Agent Stopped:</strong> {(activeIncident as any).escalationDossier?.whyStopped || "Bounded autonomy limit reached after multiple simulated attempts."}
+              </p>
+              <div style={{ fontSize: "12px", color: "#991b1b", background: "#fee2e2", padding: "10px 14px", borderRadius: "6px", marginBottom: "12px" }}>
+                <strong>Recommended Human Next Steps:</strong> {(activeIncident as any).escalationDossier?.recommendedOperatorAction || "Initiate high-touch concierge phone call or apply custom payment restructuring."}
+              </div>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  onClick={() => alert("Assigned to Senior Revenue Specialist")}
+                  className="btn btn-primary btn-sm"
+                  style={{ background: "#dc2626", borderColor: "#dc2626" }}
+                >
+                  Assign to Specialist
+                </button>
+                <button
+                  onClick={() => handleSimulateAction("RECORD_PROMISE_TO_PAY", "Lock Promise to Pay")}
+                  className="btn btn-secondary btn-sm"
+                >
+                  Record Operator Promise-to-Pay
+                </button>
+              </div>
+            </div>
+          )}
 
-              <button
-                className={`demo-tab-item ${activeTab === "MESSAGES" ? "active" : ""}`}
-                onClick={() => setActiveTab("MESSAGES")}
-                id="tab-messages-btn"
-              >
-                <span>💬</span>
-                <span>Multi-Channel Communication Previews</span>
-              </button>
-
-              <button
-                className={`demo-tab-item ${activeTab === "SUPABASE_CONTEXT" ? "active" : ""}`}
-                onClick={() => setActiveTab("SUPABASE_CONTEXT")}
-                id="tab-supabase-context-btn"
-              >
-                <span>🗄️</span>
-                <span>Supabase Ground Truth Telemetry ({activeIncident.context.transactionsCount} Txns)</span>
-              </button>
-
-              <button
-                className={`demo-tab-item ${activeTab === "AUDIT_TRAIL" ? "active" : ""}`}
-                onClick={() => setActiveTab("AUDIT_TRAIL")}
-                id="tab-audit-trail-btn"
-              >
-                <span>📜</span>
-                <span>Sandbox Audit Ledger ({activeIncident.lifecycle.length} Events)</span>
-              </button>
+          {/* Action Simulation Quick Bar */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "12px",
+              background: "#faf5ff",
+              border: "1px solid #e9d5ff",
+              borderRadius: "10px",
+              padding: "14px 18px",
+              marginBottom: "22px",
+            }}
+          >
+            <div>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#6b21a8", textTransform: "uppercase" }}>
+                Recommended Action: {activeIncident.analysis?.recommendedAction || "SMART_RETRY"}
+              </div>
+              <div style={{ fontSize: "13px", fontWeight: 700, color: "#3b0764", marginTop: "2px" }}>
+                {activeIncident.analysis?.selectedStrategy || "Autonomous Omnichannel Strategy"}
+              </div>
             </div>
 
-            {/* TAB 1: AI RECOVERY INTELLIGENCE */}
-            {activeTab === "INTELLIGENCE" && (
-              <div style={{ padding: "20px 24px" }} id="tab-content-intelligence">
-                {/* AI Unavailable State or Live Analysis Banner */}
-                {(activeIncident.analysis as any).unavailable || (activeIncident.analysis as any).aiError ? (
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+              <button
+                disabled={runningAutonomousLoop || activeIncident.incident.status === "RECOVERED"}
+                onClick={handleStartAutonomousRecovery}
+                className="btn btn-primary"
+                style={{
+                  background: activeIncident.incident.status === "RECOVERED" ? "#15803d" : "#16a34a",
+                  borderColor: activeIncident.incident.status === "RECOVERED" ? "#15803d" : "#16a34a",
+                  fontWeight: 800,
+                  fontSize: "13px",
+                  padding: "8px 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  boxShadow: "0 2px 8px rgba(22, 163, 74, 0.3)",
+                }}
+              >
+                <span>{runningAutonomousLoop ? "⏳" : "🟢"}</span>
+                <span>{runningAutonomousLoop ? "Running Autonomous Loop..." : activeIncident.incident.status === "RECOVERED" ? "✓ Recovered Successfully" : "START AUTONOMOUS RECOVERY"}</span>
+              </button>
+
+              <button
+                disabled={runningAutonomousLoop || executingAction !== null}
+                onClick={() => handleSimulateAction(activeIncident.analysis?.recommendedAction, activeIncident.analysis?.selectedStrategy)}
+                className="btn btn-secondary"
+                style={{
+                  fontWeight: 600,
+                  fontSize: "12px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <span>🚀</span>
+                <span>{executingAction ? "Simulating..." : `Simulate Step: ${activeIncident.analysis?.recommendedAction || "Action"}`}</span>
+              </button>
+
+              <button
+                disabled={runningAutonomousLoop || reanalyzing}
+                onClick={handleReassessLoop}
+                className="btn btn-secondary"
+                style={{ fontWeight: 600, fontSize: "12px" }}
+                title="Evaluate gateway telemetry and formulate next cascade action"
+              >
+                {reanalyzing ? "Reassessing..." : "⚡ Next Loop Step"}
+              </button>
+
+              <button
+                onClick={(e) => handleRouteToAIAgent(activeIncident.incident.id, e)}
+                className="btn btn-secondary"
+                style={{ fontWeight: 600, fontSize: "12px" }}
+              >
+                Inspect in AI Agent Page ↗
+              </button>
+
+              <button
+                onClick={handleEscalateToHuman}
+                className="btn btn-secondary"
+                style={{ fontWeight: 600, fontSize: "12px", color: "#b91c1c" }}
+              >
+                🛑 Escalate to Human
+              </button>
+            </div>
+          </div>
+
+          {/* Running Autonomous Loop Status Banner */}
+          {runningAutonomousLoop && (
+            <div
+              style={{
+                background: "#0c1b26",
+                border: "1.5px solid #38bdf8",
+                borderRadius: "10px",
+                padding: "16px 20px",
+                marginBottom: "22px",
+                color: "#f8fafc",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "12px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <div
+                  className="spinner"
+                  style={{ width: "20px", height: "20px", borderWidth: "2px", borderColor: "#38bdf8", borderTopColor: "transparent" }}
+                ></div>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <strong style={{ fontSize: "14px", color: "#38bdf8" }}>
+                      Gemini Autonomous Recovery Loop in Progress
+                    </strong>
+                    <span className="status-pill purple" style={{ fontSize: "10px" }}>
+                      Bounded Autonomy • Max 3 Attempts
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "12px", color: "#94a3b8", marginTop: "2px" }}>
+                    {loopNotice || "Evaluating payment telemetry, formulating next optimal recovery intervention..."}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Autonomous Execution Trace List */}
+          {loopTrace.length > 0 && (
+            <div
+              style={{
+                background: "#f8fafc",
+                border: "1.5px solid #e2e8f0",
+                borderRadius: "10px",
+                padding: "16px 20px",
+                marginBottom: "22px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>
+                  Autonomous Closed-Loop Execution Trace ({loopTrace.length} Step{loopTrace.length > 1 ? "s" : ""})
+                </div>
+                <span className="status-pill purple" style={{ fontSize: "10px" }}>
+                  Gemini 2.5 Flash Autonomous Engine
+                </span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {loopTrace.map((st, idx) => (
                   <div
+                    key={idx}
                     style={{
-                      background: "#fffbeb",
-                      border: "1px solid #fde68a",
+                      background: "#ffffff",
+                      border: "1px solid #cbd5e1",
                       borderRadius: "8px",
-                      padding: "16px",
-                      marginBottom: "20px",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "10px",
+                      padding: "10px 14px",
+                      fontSize: "12px",
                     }}
-                    id="ai-unavailable-alert"
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#92400e", fontWeight: 700, fontSize: "13px" }}>
-                      <span>⚠️</span>
-                      <span>Gemini AI Engine Offline / Key Required</span>
-                    </div>
-                    <p style={{ margin: 0, fontSize: "12px", color: "#78350f" }}>
-                      {(activeIncident.analysis as any).aiError ||
-                        "GEMINI_API_KEY environment variable is not configured. Configure GEMINI_API_KEY in environment/settings to enable live AI reasoning."}
-                    </p>
-                    <div style={{ display: "flex", gap: "10px", alignItems: "center", marginTop: "4px" }}>
-                      <input
-                        type="text"
-                        className="text-input"
-                        placeholder="Optional: Enter custom directive and retry..."
-                        value={reanalysisPrompt}
-                        onChange={(e) => setReanalysisPrompt(e.target.value)}
-                        style={{ maxWidth: "400px", fontSize: "12px", padding: "6px 10px" }}
-                      />
-                      <button
-                        className="action-button"
-                        onClick={handleReanalyzeWithAI}
-                        disabled={reanalyzing}
-                        style={{ fontSize: "12px", padding: "6px 14px" }}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                      <strong>
+                        Step {st.iteration}: {st.decidedAction?.actionTitle || st.decidedAction?.selectedCapability || "Autonomous Action"}
+                      </strong>
+                      <span
+                        className={`status-pill ${st.simulatedOutcome?.isSettled ? "success" : st.isTerminal ? "danger" : "purple"}`}
+                        style={{ fontSize: "9.5px" }}
                       >
-                        {reanalyzing ? "Synthesizing..." : "↻ Retry AI Analysis"}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {/* Top Metrics Row */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px", marginBottom: "20px" }}>
-                  <div
-                    style={{
-                      background: "#f0fdf4",
-                      border: "1px solid #bbf7d0",
-                      borderRadius: "8px",
-                      padding: "14px 16px",
-                    }}
-                  >
-                    <div style={{ fontSize: "11px", color: "#166534", fontWeight: 700 }}>RECOVERY PROBABILITY</div>
-                    <div style={{ fontSize: "24px", fontWeight: 800, color: "#15803d", margin: "4px 0 2px" }}>
-                      {Math.round((activeIncident.analysis.recoveryProbability || 0.85) * 100)}%
-                    </div>
-                    <div style={{ fontSize: "11px", color: "#166534" }}>Confidence score via Gemini reasoning</div>
-                  </div>
-
-                  <div
-                    style={{
-                      background: "#eff6ff",
-                      border: "1px solid #bfdbfe",
-                      borderRadius: "8px",
-                      padding: "14px 16px",
-                    }}
-                  >
-                    <div style={{ fontSize: "11px", color: "#1e40af", fontWeight: 700 }}>EXPECTED RECOVERABLE</div>
-                    <div style={{ fontSize: "24px", fontWeight: 800, color: "#1d4ed8", margin: "4px 0 2px" }}>
-                      ₹{Number(activeIncident.analysis.expectedRecoverableRevenue || 0).toLocaleString()} {activeIncident.incident.currency}
-                    </div>
-                    <div style={{ fontSize: "11px", color: "#1e40af" }}>
-                      Out of ₹{activeIncident.incident.amount.toLocaleString()} at risk
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      background: "#faf5ff",
-                      border: "1px solid #e9d5ff",
-                      borderRadius: "8px",
-                      padding: "14px 16px",
-                    }}
-                  >
-                    <div style={{ fontSize: "11px", color: "#6b21a8", fontWeight: 700 }}>RECOMMENDED TIMING</div>
-                    <div style={{ fontSize: "16px", fontWeight: 800, color: "#7e22ce", margin: "8px 0 4px" }}>
-                      {activeIncident.analysis.recommendedTiming || "Immediate T+3min"}
-                    </div>
-                    <div style={{ fontSize: "11px", color: "#6b21a8" }}>Optimized execution window</div>
-                  </div>
-                </div>
-
-                {/* Grounded Evidence Tags */}
-                <div style={{ marginBottom: "18px" }}>
-                  <div style={{ fontSize: "12px", fontWeight: 800, color: "#475569", marginBottom: "8px" }}>
-                    GROUNDED TELEMETRY EVIDENCE EXTRACTED BY AGENT:
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }} id="evidence-chips-list">
-                    {(activeIncident.analysis.evidence || activeIncident.analysis.relevantEvidence || [
-                      `Decline code: ${activeIncident.incident.failureCode}`,
-                      `Customer: ${activeIncident.customer.name}`,
-                      `Payment rail: ${activeIncident.incident.paymentMethod}`,
-                    ]).map((ev: string, i: number) => (
-                      <span key={i} className="evidence-tag-chip">
-                        <i>✓</i>
-                        <span>{ev}</span>
+                        {st.simulatedOutcome?.pspResponseCode || st.agentState}
                       </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Strategy Callout */}
-                <div className="strategy-callout-box" id="strategy-callout-panel">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
-                    <div>
-                      <span className="status-pill purple" style={{ marginBottom: "4px" }}>
-                        AUTONOMOUS STRATEGY SELECTED
-                      </span>
-                      <h4 style={{ fontSize: "15px", margin: "4px 0", color: "#172a34", fontWeight: 800 }}>
-                        {activeIncident.analysis.selectedStrategy}
-                      </h4>
                     </div>
-                    <span className="status-pill info">{activeIncident.analysis.recommendedTiming}</span>
+                    <div style={{ fontSize: "11px", color: "#475569", marginBottom: "4px" }}>
+                      <strong>Decision:</strong> {st.decidedAction?.decisionRationale}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#15803d", background: "#f0fdf4", padding: "6px 8px", borderRadius: "4px" }}>
+                      📊 <strong>Observed Feedback:</strong> {st.simulatedOutcome?.observation} (Latency: {st.simulatedOutcome?.latency})
+                    </div>
                   </div>
-                  <p style={{ fontSize: "12px", color: "#334155", lineHeight: "18px", margin: "8px 0" }}>
-                    <strong>Mathematical & Algorithmic Justification:</strong>{" "}
-                    {activeIncident.analysis.strategyJustification}
-                  </p>
-                </div>
+                ))}
+              </div>
+            </div>
+          )}
 
-                {/* Root Cause & Risk Assessment */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
-                    <h4 style={{ fontSize: "13px", margin: "0 0 8px", color: "#172a34", fontWeight: 800 }}>
-                      🔍 Root-Cause Diagnosis
-                    </h4>
-                    <p style={{ fontSize: "12px", color: "#475569", lineHeight: "18px", margin: 0 }}>
-                      {activeIncident.analysis.rootCause}
+          {/* Simulation Result Notification */}
+          {simulationResult && (
+            <div
+              style={{
+                background: "#f0fdf4",
+                border: "1.5px solid #86efac",
+                borderRadius: "10px",
+                padding: "16px 20px",
+                marginBottom: "22px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "16px" }}>✅</span>
+                  <h4 style={{ fontSize: "14px", fontWeight: 800, color: "#166534", margin: 0 }}>
+                    Sandbox Simulation Completed Successfully
+                  </h4>
+                </div>
+                <span style={{ fontSize: "11px", color: "#15803d", fontWeight: 700 }}>
+                  Latency: {simulationResult.gatewayLatency} • Response: {simulationResult.pspResponseCode}
+                </span>
+              </div>
+              <p style={{ fontSize: "12px", color: "#14532d", margin: "0 0 8px" }}>
+                {simulationResult.telemetryNotes}
+              </p>
+              <div style={{ fontSize: "11px", color: "#166534" }}>
+                <strong>Simulated Gateway Ack:</strong> <code>{simulationResult.simulatedGatewayResponse.authCode}</code> | <strong>Projected Recovery:</strong> ₹{simulationResult.projectedRecovery.toLocaleString()}
+              </div>
+            </div>
+          )}
+
+          {/* Workspace Tabs Navigation */}
+          <div className="tabs" style={{ marginBottom: "18px" }}>
+            <button
+              className={`tab-btn ${activeTab === "INTELLIGENCE" ? "active" : ""}`}
+              onClick={() => setActiveTab("INTELLIGENCE")}
+            >
+              🧠 AI Intelligence & Strategy
+            </button>
+            <button
+              className={`tab-btn ${activeTab === "MESSAGES" ? "active" : ""}`}
+              onClick={() => setActiveTab("MESSAGES")}
+            >
+              💬 Omnichannel Messages
+            </button>
+            <button
+              className={`tab-btn ${activeTab === "SUPABASE_CONTEXT" ? "active" : ""}`}
+              onClick={() => setActiveTab("SUPABASE_CONTEXT")}
+            >
+              📊 Telemetry & Context
+            </button>
+            <button
+              className={`tab-btn ${activeTab === "AUDIT_TRAIL" ? "active" : ""}`}
+              onClick={() => setActiveTab("AUDIT_TRAIL")}
+            >
+              🔒 Sandbox Audit Ledger
+            </button>
+          </div>
+
+          {/* TAB 1: INTELLIGENCE & STRATEGY */}
+          {activeTab === "INTELLIGENCE" && (
+            <div>
+              {/* If AI Unavailable error */}
+              {activeIncident.analysis?.unavailable && (
+                <div
+                  style={{
+                    background: "#fffbeb",
+                    border: "1.5px solid #fcd34d",
+                    borderRadius: "8px",
+                    padding: "14px 18px",
+                    marginBottom: "18px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: "13px", fontWeight: 700, color: "#92400e" }}>
+                      AI Reasoning Unavailable
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#b45309", marginTop: "2px" }}>
+                      {activeIncident.analysis.aiError || "Gemini API key is not configured in settings."}
+                    </div>
+                  </div>
+                  <button onClick={handleTriggerAnalysis} className="btn btn-secondary btn-sm" style={{ fontWeight: 700 }}>
+                    Retry Live AI Analysis
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "20px" }}>
+                {/* Left: AI Diagnosis & Evidence */}
+                <div>
+                  <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "18px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "6px" }}>
+                      Root Cause Diagnosis
+                    </div>
+                    <p style={{ fontSize: "13px", color: "#1e293b", lineHeight: "1.5", margin: 0, fontWeight: 500 }}>
+                      {activeIncident.analysis?.rootCause || "Analyzing payment disruption root cause..."}
                     </p>
                   </div>
 
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
-                    <h4 style={{ fontSize: "13px", margin: "0 0 8px", color: "#172a34", fontWeight: 800 }}>
-                      ⚠️ Key Risk Factors & Mitigation
-                    </h4>
-                    <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "12px", color: "#475569", lineHeight: "18px" }}>
-                      {(activeIncident.analysis.keyRiskFactors || [
-                        "Repeated batch debits may trigger bank anti-fraud locks",
-                        "High customer LTV justifies courteous multi-channel engagement",
-                      ]).map((risk: string, idx: number) => (
-                        <li key={idx} style={{ marginBottom: "4px" }}>
-                          {risk}
-                        </li>
-                      ))}
+                  <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "18px", border: "1px solid #e2e8f0" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "8px" }}>
+                      Telemetry Evidence & Customer Grounding
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "12.5px", color: "#334155", lineHeight: "1.6" }}>
+                      {activeIncident.analysis?.relevantEvidence?.map((ev, i) => (
+                        <li key={i}>{ev}</li>
+                      )) || <li>Ingested telemetry grounded from Supabase profile.</li>}
                     </ul>
                   </div>
                 </div>
 
-                {/* Alternative Strategies & Escalation */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
-                    <h4 style={{ fontSize: "13px", margin: "0 0 8px", color: "#172a34", fontWeight: 800 }}>
-                      ⚖️ Alternative Strategies Considered
-                    </h4>
-                    <p style={{ fontSize: "12px", color: "#475569", lineHeight: "18px", margin: 0 }}>
-                      {activeIncident.analysis.alternativeStrategiesConsidered ||
-                        "Fallback: Manual phone outreach considered but deprioritized due to high touchpoint cost and slower resolution time."}
-                    </p>
-                  </div>
-
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
-                    <h4 style={{ fontSize: "13px", margin: "0 0 8px", color: "#172a34", fontWeight: 800 }}>
-                      🚨 Escalation Criteria
-                    </h4>
-                    <p style={{ fontSize: "12px", color: "#475569", lineHeight: "18px", margin: 0 }}>
-                      {activeIncident.analysis.escalationCriteria ||
-                        "Escalate to human billing team if payment fails after 2 smart retries or if customer disputes debit."}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Action Execution Dispatcher */}
-                <div
-                  style={{
-                    marginTop: "20px",
-                    background: "#ffffff",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: "8px",
-                    padding: "16px",
-                  }}
-                  id="action-dispatch-panel"
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <div>
-                      <h4 style={{ fontSize: "13px", margin: 0, fontWeight: 800, color: "#172a34" }}>
-                        Sandbox Recovery Actions Dispatch Center
-                      </h4>
-                      <p style={{ fontSize: "11.5px", color: "#64748b", margin: "2px 0 0" }}>
-                        Simulate acquirer and gateway recovery actions without modifying production databases.
-                      </p>
-                    </div>
-                    <span className="status-pill success">100% Sandbox Safe</span>
-                  </div>
-
-                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                    <button
-                      className="action-button"
-                      onClick={() =>
-                        handleExecuteAction(
-                          activeIncident.analysis.recommendedAction || "SMART_RETRY",
-                          activeIncident.analysis.selectedStrategy
-                        )
-                      }
-                      disabled={executingAction !== null}
-                      style={{ fontSize: "12px", padding: "8px 16px" }}
-                    >
-                      {executingAction ? "Dispatching..." : `⚡ Dispatch Recommended (${activeIncident.analysis.recommendedAction || "SMART_RETRY"})`}
-                    </button>
-
-                    <button
-                      className="outline-button"
-                      onClick={() => handleExecuteAction("WHATSAPP_FALLBACK", "1-Click WhatsApp Instant UPI Fallback")}
-                      disabled={executingAction !== null}
-                      style={{ fontSize: "12px", padding: "8px 16px" }}
-                    >
-                      💬 Dispatch WhatsApp UPI Fallback
-                    </button>
-
-                    <button
-                      className="outline-button"
-                      onClick={() => handleExecuteAction("TOKEN_UPDATE_REQUEST", "RBI Card Tokenization Update Request")}
-                      disabled={executingAction !== null}
-                      style={{ fontSize: "12px", padding: "8px 16px" }}
-                    >
-                      💳 Request Tokenization Update
-                    </button>
-
-                    <button
-                      className="outline-button"
-                      onClick={() => handleExecuteAction("LOCK_PROMISE_TO_PAY", "Lock 72h Grace Period Promise-to-Pay")}
-                      disabled={executingAction !== null}
-                      style={{ fontSize: "12px", padding: "8px 16px" }}
-                    >
-                      🤝 Lock Promise-to-Pay
-                    </button>
-                  </div>
-                </div>
-
-                {/* Simulation Output Box if simulated */}
-                {simulationResult && (
-                  <div className="sandbox-simulation-box" style={{ marginTop: "20px" }} id="simulation-output-telemetry">
-                    <div className="sim-header">
-                      <span style={{ color: "#4ade80", fontWeight: 800 }}>
-                        ⚡ SIMULATION OUTCOME: {simulationResult.status}
+                {/* Right: Strategy & Metrics */}
+                <div>
+                  <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "18px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                        Selected Strategy Policy
+                      </div>
+                      <span className="status-pill success" style={{ fontSize: "9px" }}>
+                        Score: {Math.round((activeIncident.analysis?.recoveryProbability || 0.8) * 100)}%
                       </span>
-                      <span style={{ fontSize: "11px", color: "#94a3b8" }}>{simulationResult.timestamp}</span>
                     </div>
-                    <div>
-                      [SIMULATED-ACK] Dispatched: <strong>{simulationResult.actionName}</strong>
+
+                    <h4 style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a", margin: "0 0 6px" }}>
+                      {activeIncident.analysis?.selectedStrategy || "Autonomous Smart Recovery"}
+                    </h4>
+                    <p style={{ fontSize: "12px", color: "#475569", lineHeight: "1.45", margin: 0 }}>
+                      {activeIncident.analysis?.strategyJustification || "Formulating optimal recovery timing and channel mix."}
+                    </p>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                        Expected Recovery
+                      </div>
+                      <div style={{ fontSize: "18px", fontWeight: 800, color: "#059669", marginTop: "2px" }}>
+                        ₹{Number(activeIncident.analysis?.expectedRecoveryAmount || 0).toLocaleString()}
+                      </div>
                     </div>
-                    <div>
-                      [GATEWAY-METRICS] Latency: <strong>{simulationResult.gatewayLatency}</strong> | PSP Response:{" "}
-                      <code>{simulationResult.pspResponseCode}</code>
-                    </div>
-                    <div>
-                      [PROJECTED-REVENUE] Projected Recovery:{" "}
-                      <strong style={{ color: "#d6f36b" }}>₹{simulationResult.projectedRecovery.toLocaleString()}</strong>
-                    </div>
-                    <div style={{ color: "#94a3b8", marginTop: "6px" }}>
-                      ✓ {simulationResult.telemetryNotes}
+
+                    <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                        Recommended Timing
+                      </div>
+                      <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b", marginTop: "4px" }}>
+                        {activeIncident.analysis?.recommendedTiming || "Immediate T+3m"}
+                      </div>
                     </div>
                   </div>
-                )}
-              </div>
-            )}
-
-            {/* TAB 2: MULTI-CHANNEL PREVIEWS */}
-            {activeTab === "MESSAGES" && (
-              <div className="message-preview-container" id="tab-content-messages">
-                <div style={{ display: "flex", gap: "10px", justifyContent: "center", marginBottom: "20px" }}>
-                  <button
-                    className={`preset-chip-btn ${messageChannel === "WHATSAPP" ? "active" : ""}`}
-                    onClick={() => setMessageChannel("WHATSAPP")}
-                    id="channel-whatsapp-btn"
-                  >
-                    💬 WhatsApp Preview
-                  </button>
-                  <button
-                    className={`preset-chip-btn ${messageChannel === "SMS" ? "active" : ""}`}
-                    onClick={() => setMessageChannel("SMS")}
-                    id="channel-sms-btn"
-                  >
-                    📱 SMS Preview
-                  </button>
-                  <button
-                    className={`preset-chip-btn ${messageChannel === "EMAIL" ? "active" : ""}`}
-                    onClick={() => setMessageChannel("EMAIL")}
-                    id="channel-email-btn"
-                  >
-                    ✉️ Email Draft
-                  </button>
                 </div>
+              </div>
+            </div>
+          )}
 
+          {/* TAB 2: MESSAGES */}
+          {activeTab === "MESSAGES" && (
+            <div>
+              <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+                <button
+                  onClick={() => setMessageChannel("WHATSAPP")}
+                  className={`btn btn-sm ${messageChannel === "WHATSAPP" ? "btn-primary" : "btn-secondary"}`}
+                  style={{ fontWeight: 600 }}
+                >
+                  💬 WhatsApp (1-Click Intent)
+                </button>
+                <button
+                  onClick={() => setMessageChannel("SMS")}
+                  className={`btn btn-sm ${messageChannel === "SMS" ? "btn-primary" : "btn-secondary"}`}
+                  style={{ fontWeight: 600 }}
+                >
+                  📱 SMS (Shortlink)
+                </button>
+                <button
+                  onClick={() => setMessageChannel("EMAIL")}
+                  className={`btn btn-sm ${messageChannel === "EMAIL" ? "btn-primary" : "btn-secondary"}`}
+                  style={{ fontWeight: 600 }}
+                >
+                  ✉️ Email (Invoice Notification)
+                </button>
+              </div>
+
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "20px" }}>
                 {messageChannel === "WHATSAPP" && (
-                  <div className="whatsapp-mockup" id="whatsapp-preview-card">
+                  <div>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#16a34a", textTransform: "uppercase", marginBottom: "8px" }}>
+                      WhatsApp Message Preview (90%+ Open Rate)
+                    </div>
                     <div
                       style={{
-                        background: "#075e54",
-                        color: "#ffffff",
-                        padding: "10px 14px",
-                        borderRadius: "8px 8px 0 0",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        display: "flex",
-                        justifyContent: "space-between",
+                        background: "#dcf8c6",
+                        color: "#075e54",
+                        padding: "16px 20px",
+                        borderRadius: "10px",
+                        fontSize: "13px",
+                        lineHeight: "1.5",
+                        maxWidth: "600px",
+                        whiteSpace: "pre-wrap",
+                        boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
                       }}
                     >
-                      <span>Recoverly Verified Billing Bot</span>
-                      <span style={{ fontSize: "10px" }}>Active Now</span>
-                    </div>
-                    <div className="whatsapp-bubble" style={{ marginTop: "12px" }}>
-                      <div>{activeIncident.analysis.customerMessage?.whatsapp}</div>
-                      <a href="#simulated" className="whatsapp-action-btn" onClick={(e) => e.preventDefault()}>
-                        ⚡ Complete Payment in 1-Click
-                      </a>
-                      <span className="msg-time">Just now • Read</span>
+                      {activeIncident.analysis?.customerMessage?.whatsapp ||
+                        `Hi ${activeIncident.customer.name}, your payment of ₹${Number(activeIncident.incident.amount).toLocaleString()} for ${activeIncident.incident.scenarioTypeName} encountered a temporary issue. Tap below to complete securely in 1 click:\nhttps://pay.recoverly.test/intent/${activeIncident.incident.id}`}
                     </div>
                   </div>
                 )}
 
                 {messageChannel === "SMS" && (
-                  <div className="sms-mockup" id="sms-preview-card">
+                  <div>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#2563eb", textTransform: "uppercase", marginBottom: "8px" }}>
+                      Concise 160-Character SMS Format
+                    </div>
                     <div
                       style={{
-                        fontSize: "11px",
-                        color: "#64748b",
-                        textAlign: "center",
-                        marginBottom: "10px",
-                        fontWeight: 600,
+                        background: "#ffffff",
+                        border: "1px solid #cbd5e1",
+                        padding: "14px 18px",
+                        borderRadius: "8px",
+                        fontSize: "12.5px",
+                        maxWidth: "480px",
+                        color: "#1e293b",
                       }}
                     >
-                      SMS from RECOVR (Sender: VM-RCVRLY)
-                    </div>
-                    <div className="sms-bubble">
-                      {activeIncident.analysis.customerMessage?.sms}
+                      {activeIncident.analysis?.customerMessage?.sms ||
+                        `Recoverly: Complete your ₹${Number(activeIncident.incident.amount).toLocaleString()} payment securely: https://rcvr.ly/${activeIncident.incident.id.slice(-6)}`}
                     </div>
                   </div>
                 )}
 
                 {messageChannel === "EMAIL" && (
-                  <div className="email-mockup" id="email-preview-card">
-                    <div className="email-header-row">
-                      <strong>To:</strong> {activeIncident.customer.name} &lt;{activeIncident.customer.email}&gt;
+                  <div>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#475569", textTransform: "uppercase", marginBottom: "8px" }}>
+                      Subject: {activeIncident.analysis?.customerMessage?.email?.subject || `Action Required: Resolving payment for ${activeIncident.incident.scenarioTypeName}`}
                     </div>
-                    <div className="email-header-row">
-                      <strong>From:</strong> Recoverly Billing Concierge &lt;billing@recoverly.test&gt;
-                    </div>
-                    <div className="email-subject">
-                      Subject: {activeIncident.analysis.customerMessage?.email?.subject}
-                    </div>
-                    <div className="email-body-text">
-                      {activeIncident.analysis.customerMessage?.email?.body}
+                    <div
+                      style={{
+                        background: "#ffffff",
+                        border: "1px solid #cbd5e1",
+                        padding: "20px",
+                        borderRadius: "8px",
+                        fontSize: "13px",
+                        color: "#1e293b",
+                        lineHeight: "1.6",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {activeIncident.analysis?.customerMessage?.email?.body ||
+                        `Dear ${activeIncident.customer.name},\n\nWe noticed an issue processing your scheduled payment of ₹${Number(activeIncident.incident.amount).toLocaleString()}.\n\nPlease click the button below to review and resolve:\nhttps://pay.recoverly.test/resolve/${activeIncident.incident.id}\n\nBest regards,\nRecoverly Operations`}
                     </div>
                   </div>
                 )}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* TAB 3: SUPABASE CUSTOMER GROUND TRUTH */}
-            {activeTab === "SUPABASE_CONTEXT" && (
-              <div style={{ padding: "20px 24px" }} id="tab-content-supabase-context">
-                <div style={{ marginBottom: "16px" }}>
-                  <h3 style={{ fontSize: "14px", margin: 0, fontWeight: 800, color: "#172a34" }}>
-                    Live Supabase Telemetry Feeding Gemini Reasoning
-                  </h3>
-                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
-                    The AI engine ingested these specific database records to formulate its bounded strategy.
-                  </p>
+          {/* TAB 3: CONTEXT */}
+          {activeTab === "SUPABASE_CONTEXT" && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
+              <div style={{ background: "#f8fafc", padding: "16px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "6px" }}>
+                  Customer Profile
                 </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px" }}>
-                    <span style={{ fontSize: "11px", color: "#64748b" }}>Past Invoices</span>
-                    <strong style={{ display: "block", fontSize: "20px", color: "#172a34", marginTop: "2px" }}>
-                      {activeIncident.context.invoicesCount}
-                    </strong>
-                  </div>
-
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px" }}>
-                    <span style={{ fontSize: "11px", color: "#64748b" }}>Active Subscriptions</span>
-                    <strong style={{ display: "block", fontSize: "20px", color: "#172a34", marginTop: "2px" }}>
-                      {activeIncident.context.subscriptionsCount}
-                    </strong>
-                  </div>
-
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px" }}>
-                    <span style={{ fontSize: "11px", color: "#64748b" }}>Past Transactions</span>
-                    <strong style={{ display: "block", fontSize: "20px", color: "#172a34", marginTop: "2px" }}>
-                      {activeIncident.context.transactionsCount}
-                    </strong>
-                  </div>
-
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px" }}>
-                    <span style={{ fontSize: "11px", color: "#64748b" }}>Historical Cases</span>
-                    <strong style={{ display: "block", fontSize: "20px", color: "#172a34", marginTop: "2px" }}>
-                      {activeIncident.context.recoveryCasesCount}
-                    </strong>
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    background: "#0f172a",
-                    color: "#e2e8f0",
-                    borderRadius: "8px",
-                    padding: "16px",
-                    fontFamily: "'DM Mono', monospace",
-                    fontSize: "11px",
-                    lineHeight: "17px",
-                    maxHeight: "280px",
-                    overflowY: "auto",
-                  }}
-                >
-                  <div style={{ color: "#38bdf8", marginBottom: "8px" }}>
-                    // Supabase Grounded Customer Payload:
-                  </div>
-                  <pre style={{ margin: 0 }}>
-                    {JSON.stringify(
-                      {
-                        customer: activeIncident.customer,
-                        contextSummary: {
-                          invoicesCount: activeIncident.context.invoicesCount,
-                          subscriptionsCount: activeIncident.context.subscriptionsCount,
-                          transactionsCount: activeIncident.context.transactionsCount,
-                          paymentEventsCount: activeIncident.context.paymentEventsCount,
-                        },
-                        sampleInvoices: activeIncident.context.sampleInvoices,
-                        sampleSubscriptions: activeIncident.context.sampleSubscriptions,
-                      },
-                      null,
-                      2
-                    )}
-                  </pre>
+                <div style={{ fontSize: "13px", color: "#1e293b", lineHeight: "1.6" }}>
+                  <div><strong>Name:</strong> {activeIncident.customer.name}</div>
+                  <div><strong>Email:</strong> {activeIncident.customer.email}</div>
+                  <div><strong>Type:</strong> {activeIncident.customer.customer_type}</div>
                 </div>
               </div>
-            )}
 
-            {/* TAB 4: SANDBOX AUDIT TRAIL */}
-            {activeTab === "AUDIT_TRAIL" && (
-              <div style={{ padding: "20px 24px" }} id="tab-content-audit-trail">
-                <div style={{ marginBottom: "16px" }}>
-                  <h3 style={{ fontSize: "14px", margin: 0, fontWeight: 800, color: "#172a34" }}>
-                    Immutable Sandbox Audit Trail
-                  </h3>
-                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
-                    Chronological lifecycle events for Incident {activeIncident.incident.id}. Verified 0 mutations to production database.
-                  </p>
+              <div style={{ background: "#f8fafc", padding: "16px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "6px" }}>
+                  Telemetry Counts
                 </div>
+                <div style={{ fontSize: "13px", color: "#1e293b", lineHeight: "1.6" }}>
+                  <div><strong>Past Invoices:</strong> {activeIncident.context?.invoicesCount || 0}</div>
+                  <div><strong>Past Transactions:</strong> {activeIncident.context?.transactionsCount || 0}</div>
+                  <div><strong>Active Subscriptions:</strong> {activeIncident.context?.subscriptionsCount || 0}</div>
+                </div>
+              </div>
 
-                <div className="activity-timeline" id="sandbox-audit-timeline">
-                  {activeIncident.lifecycle.map((entry, idx) => (
-                    <div key={idx} className="timeline-item" style={{ paddingBottom: "16px" }}>
-                      <div className="timeline-dot" style={{ background: entry.status === "COMPLETED" ? "#22c55e" : "#0284c7" }}></div>
-                      <div className="timeline-content">
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontWeight: 800, fontSize: "12.5px", color: "#172a34" }}>
-                            [{entry.step}] {entry.title}
-                          </span>
-                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: "10.5px", color: "#64748b" }}>
-                            {entry.timestamp}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: "12px", color: "#475569", marginTop: "4px", lineHeight: "17px" }}>
-                          {entry.detail}
-                        </div>
+              <div style={{ background: "#f8fafc", padding: "16px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "6px" }}>
+                  Disruption Details
+                </div>
+                <div style={{ fontSize: "13px", color: "#1e293b", lineHeight: "1.6" }}>
+                  <div><strong>Payment Method:</strong> {activeIncident.incident.paymentMethod}</div>
+                  <div><strong>Severity:</strong> {activeIncident.incident.severity}</div>
+                  <div><strong>Created:</strong> {new Date(activeIncident.incident.createdAt).toLocaleTimeString()}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: AUDIT TRAIL */}
+          {activeTab === "AUDIT_TRAIL" && (
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "18px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "12px" }}>
+                Immutable Sandbox Execution Ledger
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {activeIncident.lifecycle?.map((step, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: "6px",
+                      background: "#ffffff",
+                      border: "1px solid #e2e8f0",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: "12px", fontWeight: 700, color: "#0f172a" }}>
+                        [{step.step}] {step.title}
+                      </div>
+                      <div style={{ fontSize: "11.5px", color: "#475569", marginTop: "2px" }}>
+                        {step.detail}
                       </div>
                     </div>
+                    <span style={{ fontSize: "10.5px", color: "#94a3b8", fontWeight: 600 }}>
+                      {step.timestamp}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* CREATION MODAL: CREATE RUNTIME SANDBOX INCIDENT */}
+      {/* ------------------------------------------------------------- */}
+      {showCreateModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(15, 23, 42, 0.65)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "16px",
+              maxWidth: "680px",
+              width: "100%",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              padding: "28px",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px", borderBottom: "1px solid #edf2f7", paddingBottom: "12px" }}>
+              <div>
+                <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
+                  Create Sandbox Revenue Incident
+                </h3>
+                <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
+                  Instantiate a real runtime payment disruption incident for testing.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="btn btn-secondary btn-sm"
+                style={{ fontSize: "14px", padding: "4px 8px" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateIncident} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {/* Problem Type Selector */}
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", display: "block", marginBottom: "6px" }}>
+                  Capability Lab / Scenario Type
+                </label>
+                <select
+                  value={selectedTypeKey}
+                  onChange={(e) => {
+                    const chosenKey = e.target.value;
+                    setSelectedTypeKey(chosenKey);
+                    const chosenType = scenarioTypes.find((t) => t.key === chosenKey);
+                    if (chosenType) {
+                      setAmount(chosenType.suggestedAmount);
+                      setPaymentMethod(chosenType.defaultPaymentMethod);
+                      setFailureCode(chosenType.defaultFailureCode);
+                      setSeverity(chosenType.defaultSeverity);
+                      setBillingContext(chosenType.sampleBillingContext);
+                    }
+                  }}
+                  className="input"
+                  style={{ width: "100%", fontWeight: 600 }}
+                >
+                  {scenarioTypes.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.name} ({t.category})
+                    </option>
                   ))}
+                </select>
+              </div>
+
+              {/* Customer Grounding */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                  <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b" }}>
+                    Customer Account
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomCustomer(!isCustomCustomer)}
+                    style={{ background: "none", border: "none", color: "#4f46e5", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    {isCustomCustomer ? "← Choose Supabase Customer" : "+ Create Custom Customer Profile"}
+                  </button>
+                </div>
+
+                {!isCustomCustomer ? (
+                  <select
+                    value={selectedCustomerId}
+                    onChange={(e) => setSelectedCustomerId(e.target.value)}
+                    className="input"
+                    style={{ width: "100%" }}
+                  >
+                    {supabaseCustomers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.email}) • {c.customer_type}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <input
+                      type="text"
+                      placeholder="Customer Name (e.g. Enterprise Client)"
+                      value={customName}
+                      onChange={(e) => setCustomName(e.target.value)}
+                      className="input"
+                    />
+                    <input
+                      type="email"
+                      placeholder="Customer Email (e.g. billing@client.test)"
+                      value={customEmail}
+                      onChange={(e) => setCustomEmail(e.target.value)}
+                      className="input"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Amount & Currency */}
+              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", gap: "12px" }}>
+                <div>
+                  <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", display: "block", marginBottom: "4px" }}>
+                    Amount at Risk
+                  </label>
+                  <input
+                    type="number"
+                    value={amount}
+                    onChange={(e) => setAmount(Number(e.target.value))}
+                    className="input"
+                    style={{ width: "100%", fontWeight: 700 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", display: "block", marginBottom: "4px" }}>
+                    Currency
+                  </label>
+                  <select
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    className="input"
+                    style={{ width: "100%" }}
+                  >
+                    <option value="INR">INR (₹)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="EUR">EUR (€)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", display: "block", marginBottom: "4px" }}>
+                    Severity
+                  </label>
+                  <select
+                    value={severity}
+                    onChange={(e) => setSeverity(e.target.value as any)}
+                    className="input"
+                    style={{ width: "100%" }}
+                  >
+                    <option value="LOW">LOW</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="HIGH">HIGH</option>
+                    <option value="CRITICAL">CRITICAL</option>
+                  </select>
                 </div>
               </div>
-            )}
+
+              {/* Payment Method & Failure Code */}
+              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "12px" }}>
+                <div>
+                  <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", display: "block", marginBottom: "4px" }}>
+                    Payment Rail / Method
+                  </label>
+                  <input
+                    type="text"
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="input"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", display: "block", marginBottom: "4px" }}>
+                    Disruption Code
+                  </label>
+                  <input
+                    type="text"
+                    value={failureCode}
+                    onChange={(e) => setFailureCode(e.target.value)}
+                    className="input"
+                    style={{ width: "100%", fontFamily: "monospace" }}
+                  />
+                </div>
+              </div>
+
+              {/* Operational Context */}
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", display: "block", marginBottom: "4px" }}>
+                  Operational / Billing Context
+                </label>
+                <textarea
+                  rows={2}
+                  value={billingContext}
+                  onChange={(e) => setBillingContext(e.target.value)}
+                  className="input"
+                  style={{ width: "100%", fontSize: "12px", resize: "vertical" }}
+                />
+              </div>
+
+              {/* Optional Operator Directive */}
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", display: "block", marginBottom: "4px" }}>
+                  Optional AI Directive / Operator Guidance
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g., Prioritize WhatsApp 1-Click recovery with 5% discount incentive"
+                  value={customInstruction}
+                  onChange={(e) => setCustomInstruction(e.target.value)}
+                  className="input"
+                  style={{ width: "100%", fontSize: "12px" }}
+                />
+              </div>
+
+              {/* Error if creation fails */}
+              {incidentError && (
+                <div style={{ color: "#ef4444", fontSize: "12px", background: "#fef2f2", padding: "8px 12px", borderRadius: "6px" }}>
+                  {incidentError}
+                </div>
+              )}
+
+              {/* Modal Buttons */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "10px", borderTop: "1px solid #edf2f7", paddingTop: "14px" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={analyzingIncident}
+                  className="btn btn-primary"
+                  style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: "6px" }}
+                >
+                  <span>⚡</span>
+                  <span>{analyzingIncident ? "Instantiating & Running AI..." : "Create & Run AI Analysis"}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

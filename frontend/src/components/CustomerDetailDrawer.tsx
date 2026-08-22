@@ -117,6 +117,28 @@ export function CustomerDetailDrawer({ customerId, onClose }: CustomerDetailDraw
                     </div>
                   </div>
 
+                  {data.sandboxIncidents && data.sandboxIncidents.length > 0 && (
+                    <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "12px", borderRadius: "8px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                        <strong style={{ fontSize: "12px", color: "#166534" }}>🔒 Active Sandbox Incidents ({data.sandboxIncidents.length})</strong>
+                        <span className="status-pill success" style={{ fontSize: "9.5px" }}>Autonomous Agent</span>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        {data.sandboxIncidents.map(sb => (
+                          <div key={sb.incident.id} style={{ background: "#ffffff", border: "1px solid #dcfce7", padding: "8px 10px", borderRadius: "6px", fontSize: "11px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div>
+                              <strong>{sb.incident.scenarioTypeName}</strong>
+                              <div style={{ color: "#64748b", fontSize: "10px" }}>{sb.incident.currency || "₹"}{Number(sb.incident.amount).toLocaleString()} • {sb.incident.failureCode}</div>
+                            </div>
+                            <span className={`status-pill ${sb.incident.status === "RECOVERED" ? "success" : sb.incident.status === "ESCALATED_TO_HUMAN" ? "danger" : "warning"}`} style={{ fontSize: "10px" }}>
+                              {sb.incident.status || "OPEN"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <strong style={{ fontSize: "12px", color: "#1e293b", display: "block", marginBottom: "8px" }}>Recent Activity</strong>
                     {data.paymentEvents.length === 0 ? (

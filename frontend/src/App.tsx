@@ -175,13 +175,16 @@ function AuthenticatedApp() {
           <SystemHealthPage />
         )}
         {page === "agent" && (
-          <AIAgentPage />
+          <AIAgentPage
+            onNavigate={navigate}
+            onSelectCustomer={(id) => setSelectedCustomerId(id)}
+          />
         )}
         {page === "scenarios" && (
           <ScenarioCenterPage />
         )}
         {page === "recovery-demo" && (
-          <RecoveryDemoPage />
+          <RecoveryDemoPage onNavigate={navigate} />
         )}
         {page === "analytics" && (
           <AnalyticsPage />

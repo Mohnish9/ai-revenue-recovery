@@ -33,6 +33,10 @@ import {
   listSubscriptions,
   listTransactions,
   parseLimit,
+  reassessSandboxIncidentWithAI,
+  escalateSandboxIncidentToHuman,
+  executeAutonomousLoopStep,
+  runFullAutonomousLoop,
   simulateRecoveryScenario,
   simulateSandboxIncident,
   updateCaseStatus,
@@ -442,5 +446,62 @@ export async function deleteSandboxIncidentController(request: Request, response
     sendError(response, error);
   }
 }
+
+export async function reassessSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { customInstruction, custom_instruction, lastOutcomeNote } = request.body || {};
+    const result = await reassessSandboxIncidentWithAI(id, {
+      customInstruction: customInstruction || custom_instruction,
+      lastOutcomeNote,
+    });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function escalateSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { reason, operatorName } = request.body || {};
+    const result = await escalateSandboxIncidentToHuman(id, {
+      reason,
+      operatorName,
+    });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function executeAutonomousStepController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { policyConfig, operatorInstruction } = request.body || {};
+    const result = await executeAutonomousLoopStep(id, {
+      policyConfig,
+      operatorInstruction,
+    });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function runFullAutonomousLoopController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { policyConfig, operatorInstruction } = request.body || {};
+    const result = await runFullAutonomousLoop(id, {
+      policyConfig,
+      operatorInstruction,
+    });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
 
 

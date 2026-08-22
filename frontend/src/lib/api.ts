@@ -3,6 +3,7 @@ import type {
   AgentLog,
   AuditLog,
   AuthResponse,
+  AutonomousStepResult,
   CreateSandboxIncidentInput,
   Customer,
   CustomerOperationsOverview,
@@ -319,6 +320,66 @@ export async function executeSandboxIncidentActionApi(
     {
       method: "POST",
       body: JSON.stringify(params),
+    }
+  );
+}
+
+export async function reassessSandboxIncidentApi(
+  id: string,
+  params?: { customInstruction?: string; lastOutcomeNote?: string }
+): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>(`/sandbox/incidents/${id}/reassess`, {
+    method: "POST",
+    body: JSON.stringify(params || {}),
+  });
+}
+
+export async function escalateSandboxIncidentApi(
+  id: string,
+  params?: { reason?: string; operatorName?: string }
+): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>(`/sandbox/incidents/${id}/escalate`, {
+    method: "POST",
+    body: JSON.stringify(params || {}),
+  });
+}
+
+export async function executeAutonomousStepApi(
+  id: string,
+  params?: {
+    policyConfig?: {
+      maxAttempts?: number;
+      allowedCapabilities?: string[];
+      maxRecoverableExposure?: number;
+    };
+    operatorInstruction?: string;
+  }
+): Promise<{ incident: SandboxIncidentResponse; stepResult: AutonomousStepResult }> {
+  return fetchJson<{ incident: SandboxIncidentResponse; stepResult: AutonomousStepResult }>(
+    `/sandbox/incidents/${id}/autonomous-step`,
+    {
+      method: "POST",
+      body: JSON.stringify(params || {}),
+    }
+  );
+}
+
+export async function runFullAutonomousLoopApi(
+  id: string,
+  params?: {
+    policyConfig?: {
+      maxAttempts?: number;
+      allowedCapabilities?: string[];
+      maxRecoverableExposure?: number;
+    };
+    operatorInstruction?: string;
+  }
+): Promise<{ incident: SandboxIncidentResponse; trace: AutonomousStepResult[]; finalState: string }> {
+  return fetchJson<{ incident: SandboxIncidentResponse; trace: AutonomousStepResult[]; finalState: string }>(
+    `/sandbox/incidents/${id}/run-loop`,
+    {
+      method: "POST",
+      body: JSON.stringify(params || {}),
     }
   );
 }

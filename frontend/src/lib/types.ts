@@ -247,6 +247,79 @@ export interface AgentLog {
   };
 }
 
+export interface HumanEscalationDossier {
+  incidentId: string;
+  customerName: string;
+  customerEmail?: string;
+  customerType?: string;
+  amountAtRisk: string;
+  rootCause: string;
+  whyStopped: string;
+  evidence: string[];
+  attemptsTimeline: Array<{
+    attemptNumber: number;
+    actionTitle: string;
+    actionType?: string;
+    executedAt: string;
+    pspResponseCode: string;
+    latency?: string;
+    observation: string;
+  }>;
+  observedTelemetrySummary: string;
+  recommendedHumanAction: string;
+  remainingAmountAtRisk: number;
+  currentRecoveryProbability: number;
+  escalationTimestamp: string;
+  assignedTier: string;
+}
+
+export interface RecoveryDossier {
+  incidentId: string;
+  customerName: string;
+  customerEmail?: string;
+  recoveredAmount: number;
+  currency: string;
+  winningAction: string;
+  winningCapability: string;
+  attemptsCount: number;
+  elapsedTime: string;
+  initialProbability: number;
+  finalProbability: number;
+  settledTimestamp: string;
+  gatewayAuthCode: string;
+  auditStatus: string;
+}
+
+export interface AutonomousStepResult {
+  iteration: number;
+  agentState: "RUNNING" | "RECOVERED" | "ESCALATED_TO_HUMAN" | "ANALYZING";
+  decidedAction?: {
+    selectedCapability: string;
+    actionTitle: string;
+    decisionRationale: string;
+    selectedStrategy: string;
+    tailoredMessage?: string;
+    channel?: string;
+    simulatedSettlement?: boolean;
+    recoveryProbability?: number;
+    telemetryObservation?: string;
+    pspResponseCode?: string;
+    latencyMs?: number;
+  };
+  simulatedOutcome?: {
+    pspResponseCode: string;
+    latency: string;
+    observation: string;
+    isSettled: boolean;
+  };
+  isTerminal: boolean;
+  terminalReason: "RECOVERED" | "MAX_ATTEMPTS_REACHED" | "ESCALATION_REQUIRED" | null;
+  escalationDossier?: HumanEscalationDossier;
+  recoveryDossier?: RecoveryDossier;
+  recoveryProbability?: number;
+  expectedRecoveryAmount?: number;
+}
+
 export interface CustomerOperationsOverview {
   customer: Customer;
   transactions: Transaction[];
@@ -254,6 +327,7 @@ export interface CustomerOperationsOverview {
   subscriptions: Subscription[];
   recoveryCases: RecoveryCase[];
   paymentEvents: PaymentEvent[];
+  sandboxIncidents?: SandboxIncidentResponse[];
 }
 
 export interface FullRecoveryCaseDetails {
@@ -352,6 +426,8 @@ export interface StructuredAIAnalysis {
   recoveryProbability: number;
   expectedRecoveryAmount: number;
   expectedRecoverableRevenue?: number;
+  tailoredMessageDraft?: string;
+  summary?: string;
   keyRiskFactors?: string[];
   alternativeStrategiesConsidered?: string;
   escalationCriteria?: string;
@@ -462,6 +538,7 @@ export interface SandboxIncidentPayload {
   paymentMethod: string;
   failureCode: string;
   billingContext: string;
+  description?: string;
   createdAt: string;
 }
 
@@ -496,6 +573,8 @@ export interface SandboxIncidentResponse {
   lifecycle: SandboxAgentLifecycleStep[];
   actions?: SandboxActionRecord[];
   record?: SandboxIncident;
+  auditLog?: any[];
+  simulation?: any;
 }
 
 export interface SandboxSimulationResult {
@@ -508,6 +587,13 @@ export interface SandboxSimulationResult {
   projectedRecovery: number;
   telemetryNotes: string;
   lifecycleUpdates: SandboxAgentLifecycleStep[];
+  executedAt: string;
+  simulatedGatewayResponse: {
+    gatewayName: string;
+    authCode: string;
+    latencyMs: number | string;
+  };
+  projectedRecoveredAmount: number;
 }
 
 export interface DemoScenarioItem {

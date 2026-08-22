@@ -16,7 +16,9 @@ import {
   createSandboxIncidentController,
   createPromiseController,
   deleteSandboxIncidentController,
+  escalateSandboxIncidentController,
   executeActionController,
+  executeAutonomousStepController,
   executeSandboxIncidentActionController,
   getCustomerController,
   getCustomerOperationsController,
@@ -39,6 +41,8 @@ import {
   listScenarioTypesController,
   listSubscriptionsController,
   listTransactionsController,
+  reassessSandboxIncidentController,
+  runFullAutonomousLoopController,
   simulateSandboxIncidentController,
   simulateScenarioController,
   updateCaseStatusController,
@@ -107,6 +111,10 @@ apiRoutes.post("/sandbox/incidents", createSandboxIncidentController);
 apiRoutes.get("/sandbox/incidents/:id", getSandboxIncidentController);
 apiRoutes.post("/sandbox/incidents/:id/analyze", analyzeSandboxIncidentController);
 apiRoutes.post("/sandbox/incidents/:id/actions", executeSandboxIncidentActionController);
+apiRoutes.post("/sandbox/incidents/:id/reassess", reassessSandboxIncidentController);
+apiRoutes.post("/sandbox/incidents/:id/escalate", escalateSandboxIncidentController);
+apiRoutes.post("/sandbox/incidents/:id/autonomous-step", executeAutonomousStepController);
+apiRoutes.post("/sandbox/incidents/:id/run-loop", runFullAutonomousLoopController);
 apiRoutes.delete("/sandbox/incidents/:id", deleteSandboxIncidentController);
 
 // Recovery Demo Scenario Types & Sandbox Fast-Path Actions

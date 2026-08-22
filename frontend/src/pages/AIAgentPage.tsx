@@ -1,5 +1,14 @@
-import React, { useState, useEffect } from "react";
-import type { RecoveryCase, AICaseAnalysis, FullRecoveryCaseDetails, SandboxIncidentResponse } from "../lib/types";
+import React, { useState, useEffect, useRef } from "react";
+import type {
+  RecoveryCase,
+  AICaseAnalysis,
+  FullRecoveryCaseDetails,
+  SandboxIncidentResponse,
+  AutonomousStepResult,
+  HumanEscalationDossier,
+  RecoveryDossier,
+  PageKey,
+} from "../lib/types";
 import {
   fetchRecoveryCases,
   fetchRecoveryCase,
@@ -9,12 +18,27 @@ import {
   fetchSandboxIncidentsApi,
   fetchSandboxIncidentApi,
   analyzeSandboxIncidentApi,
-  executeSandboxIncidentActionApi,
+  executeAutonomousStepApi,
+  runFullAutonomousLoopApi,
+  escalateSandboxIncidentApi,
 } from "../lib/api";
 
 type AgentWorkflowStep = "DETECT" | "ANALYZE" | "DECIDE" | "ACT_SIMULATE" | "OBSERVE" | "AUDIT";
 
-export function AIAgentPage() {
+type AutonomyStatus =
+  | "IDLE_READY"
+  | "ANALYZING"
+  | "RUNNING_LOOP"
+  | "PAUSED"
+  | "RECOVERED"
+  | "ESCALATED_TO_HUMAN";
+
+interface AIAgentPageProps {
+  onNavigate?: (page: PageKey) => void;
+  onSelectCustomer?: (customerId: string) => void;
+}
+
+export function AIAgentPage({ onNavigate, onSelectCustomer }: AIAgentPageProps) {
   const [cases, setCases] = useState<RecoveryCase[]>([]);
   const [sandboxIncidents, setSandboxIncidents] = useState<SandboxIncidentResponse[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState<string>("");
@@ -25,41 +49,66 @@ export function AIAgentPage() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [loadingCases, setLoadingCases] = useState(true);
   const [loadingCase, setLoadingCase] = useState(false);
-  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<AgentWorkflowStep>("DETECT");
 
-  // Execution modal/confirmation for Real Protected Actions
+  // Autonomous Bounded Engine State
+  const [autonomyStatus, setAutonomyStatus] = useState<AutonomyStatus>("IDLE_READY");
+  const [currentIteration, setCurrentIteration] = useState<number>(1);
+  const [maxAttempts, setMaxAttempts] = useState<number>(4);
+  const [executionTrace, setExecutionTrace] = useState<AutonomousStepResult[]>([]);
+  const [isLoopPacing, setIsLoopPacing] = useState<boolean>(false);
+  const isLoopRunningRef = useRef<boolean>(false);
+  const [stepNotice, setStepNotice] = useState<string | null>(null);
+
+  // Terminal Dossiers
+  const [escalationDossier, setEscalationDossier] = useState<HumanEscalationDossier | null>(null);
+  const [recoveryDossier, setRecoveryDossier] = useState<RecoveryDossier | null>(null);
+
+  // Operator prompt guidance & policy config
+  const [customInstruction, setCustomInstruction] = useState("");
+  const [showPolicyConfig, setShowPolicyConfig] = useState(false);
+  const [allowedChannels, setAllowedChannels] = useState<{
+    whatsapp: boolean;
+    sms: boolean;
+    email: boolean;
+    gatewayRetry: boolean;
+    cardUpdate: boolean;
+    mandateReauth: boolean;
+    retentionOffer: boolean;
+  }>({
+    whatsapp: true,
+    sms: true,
+    email: true,
+    gatewayRetry: true,
+    cardUpdate: true,
+    mandateReauth: true,
+    retentionOffer: true,
+  });
+
+  // Protected Real Action Modal (for Supabase production cases)
   const [pendingRealAction, setPendingRealAction] = useState<string | null>(null);
   const [executingRealAction, setExecutingRealAction] = useState(false);
-
-  // Safe Simulation Output
-  const [simulatingAction, setSimulatingAction] = useState<string | null>(null);
-  const [simulatedResult, setSimulatedResult] = useState<{
-    actionName: string;
-    status: string;
-    timestamp: string;
-    telemetry: string;
-    projectedOutcome: string;
-  } | null>(null);
-
-  // Operator prompt guidance
-  const [customInstruction, setCustomInstruction] = useState("");
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   // Chat state
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "ai"; text: string; time: string }>>([
     {
       sender: "ai",
-      text: "I am your Autonomous Revenue Recovery AI Agent. I evaluate real-time payment telemetry, identify leakage patterns, execute bounded agentic loops (DETECT → ANALYZE → DECIDE → ACT/SIMULATE → OBSERVE → AUDIT), and orchestrate safe recovery strategies. Select any case or sandbox incident to begin inspection.",
+      text: "I am your Autonomous Revenue Recovery AI Agent. I evaluate real-time payment telemetry, formulate dynamic recovery cascades without static sequences, execute bounded multi-channel interventions, and automatically halt at safety boundaries or recover 100% of disrupted revenue.",
       time: "Ready",
     },
   ]);
   const [chatLoading, setChatLoading] = useState(false);
 
-  // Check if current selected is a sandbox incident
-  const isSandboxTarget = selectedCaseId.startsWith("sandbox_") || selectedCaseId.startsWith("sb_") || selectedCaseId.startsWith("inc_") || sandboxIncidents.some(s => s.incident.id === selectedCaseId);
+  // Check if current target is sandbox
+  const isSandboxTarget =
+    selectedCaseId.startsWith("SB-") ||
+    selectedCaseId.startsWith("sb_") ||
+    selectedCaseId.startsWith("inc_") ||
+    sandboxIncidents.some((s) => s.incident.id === selectedCaseId);
 
-  // Load recovery cases and sandbox incidents list
+  // Load cases and sandbox queue
   const loadCasesList = async () => {
     try {
       setLoadingCases(true);
@@ -88,7 +137,7 @@ export function AIAgentPage() {
     loadCasesList();
   }, []);
 
-  // Load detailed case / sandbox context when selectedCaseId changes
+  // Load context on selectedCaseId change
   useEffect(() => {
     async function loadTargetData() {
       if (!selectedCaseId) return;
@@ -96,14 +145,35 @@ export function AIAgentPage() {
         setLoadingCase(true);
         setAnalysis(null);
         setAnalysisError(null);
-        setSimulatedResult(null);
+        setEscalationDossier(null);
+        setRecoveryDossier(null);
+        setExecutionTrace([]);
+        setAutonomyStatus("IDLE_READY");
+        isLoopRunningRef.current = false;
         setActiveWorkflowStep("DETECT");
 
         if (isSandboxTarget) {
           const sbItem = await fetchSandboxIncidentApi(selectedCaseId);
           setSandboxDetail(sbItem);
           setCaseDetails(null);
-          if (sbItem.analysis) {
+
+          // Check if incident is already terminal or has trace
+          if (sbItem.incident.status === "RECOVERED") {
+            setAutonomyStatus("RECOVERED");
+            if ((sbItem as any).record?.recoveryDossier) {
+              setRecoveryDossier((sbItem as any).record.recoveryDossier);
+            }
+            setActiveWorkflowStep("AUDIT");
+          } else if (
+            sbItem.incident.status === "ESCALATED_TO_HUMAN" ||
+            sbItem.incident.status === "ESCALATED"
+          ) {
+            setAutonomyStatus("ESCALATED_TO_HUMAN");
+            if ((sbItem as any).record?.escalationDossier) {
+              setEscalationDossier((sbItem as any).record.escalationDossier);
+            }
+            setActiveWorkflowStep("AUDIT");
+          } else if (sbItem.analysis) {
             setAnalysis({
               detectedRisk: sbItem.analysis.detectedRisk,
               summary: sbItem.analysis.detectedRisk,
@@ -112,11 +182,17 @@ export function AIAgentPage() {
               selectedStrategy: sbItem.analysis.selectedStrategy,
               strategyJustification: sbItem.analysis.aiReasoning,
               recoveryProbabilityScore: sbItem.analysis.recoveryProbability,
-              expectedRecoverableRevenue: sbItem.analysis.expectedRecoverableRevenue || sbItem.analysis.expectedRecoveryAmount,
+              expectedRecoverableRevenue:
+                sbItem.analysis.expectedRecoverableRevenue ||
+                sbItem.analysis.expectedRecoveryAmount,
               optimalTiming: sbItem.analysis.recommendedTiming,
-              relevantEvidence: sbItem.analysis.evidence || sbItem.analysis.relevantEvidence || [],
+              relevantEvidence:
+                sbItem.analysis.evidence || sbItem.analysis.relevantEvidence || [],
               keyRiskFactors: sbItem.analysis.keyRiskFactors || [],
-              tailoredMessageDraft: sbItem.analysis.tailoredMessageDraft,
+              tailoredMessageDraft:
+                sbItem.analysis.tailoredMessageDraft ||
+                sbItem.analysis.customerMessage?.whatsapp ||
+                "",
             });
             setActiveWorkflowStep("DECIDE");
           }
@@ -134,7 +210,8 @@ export function AIAgentPage() {
     loadTargetData();
   }, [selectedCaseId, isSandboxTarget]);
 
-  const handleRunAgentWorkflow = async () => {
+  // Initial Diagnostic Run
+  const handleRunInitialDiagnosis = async () => {
     if (!selectedCaseId) return;
     try {
       setAnalyzing(true);
@@ -153,11 +230,16 @@ export function AIAgentPage() {
             selectedStrategy: res.analysis.selectedStrategy,
             strategyJustification: res.analysis.aiReasoning,
             recoveryProbabilityScore: res.analysis.recoveryProbability,
-            expectedRecoverableRevenue: res.analysis.expectedRecoverableRevenue || res.analysis.expectedRecoveryAmount,
+            expectedRecoverableRevenue:
+              res.analysis.expectedRecoverableRevenue || res.analysis.expectedRecoveryAmount,
             optimalTiming: res.analysis.recommendedTiming,
-            relevantEvidence: res.analysis.evidence || res.analysis.relevantEvidence || [],
+            relevantEvidence:
+              res.analysis.evidence || res.analysis.relevantEvidence || [],
             keyRiskFactors: res.analysis.keyRiskFactors || [],
-            tailoredMessageDraft: res.analysis.tailoredMessageDraft,
+            tailoredMessageDraft:
+              res.analysis.tailoredMessageDraft ||
+              res.analysis.customerMessage?.whatsapp ||
+              "",
           });
         }
         setActiveWorkflowStep("DECIDE");
@@ -167,7 +249,6 @@ export function AIAgentPage() {
         setActiveWorkflowStep("DECIDE");
       }
     } catch (e: any) {
-      console.warn("AI agent analysis notice:", e?.message);
       setAnalysisError(e.message || "Failed to complete AI agent analysis");
       setActiveWorkflowStep("DETECT");
     } finally {
@@ -175,74 +256,189 @@ export function AIAgentPage() {
     }
   };
 
-  const handleSimulateAction = (actionName: string) => {
-    setSimulatingAction(actionName);
-    setActiveWorkflowStep("ACT_SIMULATE");
-
-    if (isSandboxTarget && sandboxDetail) {
-      executeSandboxIncidentActionApi(sandboxDetail.incident.id, {
-        actionType: actionName,
-        strategyName: analysis?.selectedStrategy || "Autonomous Safe Strategy",
-        reason: "Simulated execution from AI Agent Command Center",
-      }).then(({ simulation, updatedIncident }) => {
-        setSimulatingAction(null);
-        setSandboxDetail(updatedIncident);
-        setSimulatedResult({
-          actionName,
-          status: `${simulation.status} (Isolated Sandbox)`,
-          timestamp: new Date(simulation.executedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          telemetry: `${simulation.simulatedGatewayResponse.gatewayName}: ${simulation.simulatedGatewayResponse.authCode} in ${simulation.simulatedGatewayResponse.latencyMs}ms.`,
-          projectedOutcome: `Estimated recovery: ${updatedIncident.incident.currency || "₹"}${simulation.projectedRecoveredAmount.toLocaleString()} (${Math.round((analysis?.recoveryProbabilityScore || 0.8) * 100)}% confidence).`,
-        });
-        setActiveWorkflowStep("OBSERVE");
-      }).catch(() => {
-        setSimulatingAction(null);
-        setActiveWorkflowStep("OBSERVE");
-      });
+  // ONE-CLICK START: Autonomous Closed Loop Execution
+  const handleStartAutonomousRecovery = async () => {
+    if (!selectedCaseId || !isSandboxTarget) {
+      // For Supabase case, run initial diagnosis and step
+      handleRunInitialDiagnosis();
       return;
     }
 
-    setTimeout(() => {
-      setSimulatingAction(null);
-      const prob = analysis?.recoveryProbabilityScore || 0.82;
-      const expectedRecovery =
-        analysis?.expectedRecoverableRevenue ||
-        Math.round(Number(currentCase?.amount_at_risk || 5000) * prob);
-      setSimulatedResult({
-        actionName,
-        status: "SIMULATED_SUCCESS (Read-Only Sandbox)",
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        telemetry: `Simulated via autonomous sandbox router. Acquirer ACK in 118ms. 0 database mutations applied.`,
-        projectedOutcome: `Estimated recovery: ₹${expectedRecovery.toLocaleString()} (${Math.round(prob * 100)}% confidence score).`,
-      });
-      setActiveWorkflowStep("OBSERVE");
-    }, 650);
+    try {
+      setAutonomyStatus("RUNNING_LOOP");
+      setIsLoopPacing(true);
+      isLoopRunningRef.current = true;
+      setStepNotice(null);
+      setEscalationDossier(null);
+      setRecoveryDossier(null);
+
+      // Run automated paced loop
+      let stepCount = 0;
+      let isTerminal = false;
+
+      while (isLoopRunningRef.current && !isTerminal && stepCount < maxAttempts) {
+        stepCount++;
+        setCurrentIteration(stepCount);
+        setActiveWorkflowStep("ANALYZE");
+
+        // Small delay for UI visual feedback on step transition
+        await new Promise((r) => setTimeout(r, 450));
+        if (!isLoopRunningRef.current) break;
+
+        setActiveWorkflowStep("DECIDE");
+        const res = await executeAutonomousStepApi(selectedCaseId, {
+          policyConfig: {
+            maxAttempts,
+          },
+          operatorInstruction: customInstruction || undefined,
+        });
+
+        setActiveWorkflowStep("ACT_SIMULATE");
+        setSandboxDetail(res.incident);
+        setExecutionTrace((prev) => [...prev, res.stepResult]);
+
+        if (res.incident.analysis) {
+          setAnalysis({
+            detectedRisk: res.incident.analysis.detectedRisk,
+            summary: res.incident.analysis.detectedRisk,
+            rootCauseAnalysis: res.incident.analysis.rootCause,
+            recommendedAction: res.incident.analysis.recommendedAction,
+            selectedStrategy: res.incident.analysis.selectedStrategy,
+            strategyJustification: res.incident.analysis.aiReasoning,
+            recoveryProbabilityScore: res.incident.analysis.recoveryProbability,
+            expectedRecoverableRevenue:
+              res.incident.analysis.expectedRecoverableRevenue ||
+              res.incident.analysis.expectedRecoveryAmount,
+            optimalTiming: res.incident.analysis.recommendedTiming,
+            relevantEvidence:
+              res.incident.analysis.evidence ||
+              res.incident.analysis.relevantEvidence ||
+              [],
+            keyRiskFactors: res.incident.analysis.keyRiskFactors || [],
+            tailoredMessageDraft:
+              res.incident.analysis.tailoredMessageDraft ||
+              res.incident.analysis.customerMessage?.whatsapp ||
+              "",
+          });
+        }
+
+        await new Promise((r) => setTimeout(r, 600));
+        setActiveWorkflowStep("OBSERVE");
+
+        if (res.stepResult.isTerminal) {
+          isTerminal = true;
+          isLoopRunningRef.current = false;
+          setActiveWorkflowStep("AUDIT");
+
+          if (res.stepResult.terminalReason === "RECOVERED") {
+            setAutonomyStatus("RECOVERED");
+            if (res.stepResult.recoveryDossier) {
+              setRecoveryDossier(res.stepResult.recoveryDossier);
+            }
+          } else {
+            setAutonomyStatus("ESCALATED_TO_HUMAN");
+            if (res.stepResult.escalationDossier) {
+              setEscalationDossier(res.stepResult.escalationDossier);
+            }
+          }
+          break;
+        }
+
+        // Pacing pause between loop iterations so operator can observe each step
+        setStepNotice(`Iteration #${stepCount} executed • Observing telemetry before next cascade...`);
+        await new Promise((r) => setTimeout(r, 1400));
+      }
+    } catch (e: any) {
+      console.warn("Autonomous loop execution note:", e);
+      setAutonomyStatus("PAUSED");
+      setAnalysisError(e.message || "Autonomous loop encountered an error");
+    } finally {
+      setIsLoopPacing(false);
+    }
   };
 
+  // Instant Run Full Loop (No pacing delay)
+  const handleRunFullLoopInstant = async () => {
+    if (!selectedCaseId || !isSandboxTarget) return;
+    try {
+      setAutonomyStatus("RUNNING_LOOP");
+      setIsLoopPacing(true);
+      setActiveWorkflowStep("ACT_SIMULATE");
+
+      const res = await runFullAutonomousLoopApi(selectedCaseId, {
+        policyConfig: {
+          maxAttempts,
+        },
+        operatorInstruction: customInstruction || undefined,
+      });
+
+      setSandboxDetail(res.incident);
+      setExecutionTrace(res.trace);
+      setActiveWorkflowStep("AUDIT");
+
+      if (res.finalState === "RECOVERED") {
+        setAutonomyStatus("RECOVERED");
+        if ((res.incident as any).record?.recoveryDossier) {
+          setRecoveryDossier((res.incident as any).record.recoveryDossier);
+        }
+      } else {
+        setAutonomyStatus("ESCALATED_TO_HUMAN");
+        if ((res.incident as any).record?.escalationDossier) {
+          setEscalationDossier((res.incident as any).record.escalationDossier);
+        }
+      }
+    } catch (e: any) {
+      setAnalysisError(e.message || "Failed to execute loop");
+      setAutonomyStatus("PAUSED");
+    } finally {
+      setIsLoopPacing(false);
+    }
+  };
+
+  // Pause / Resume
+  const handlePauseLoop = () => {
+    isLoopRunningRef.current = false;
+    setAutonomyStatus("PAUSED");
+    setIsLoopPacing(false);
+  };
+
+  // Force Manual Human Escalation
+  const handleForceHumanEscalate = async () => {
+    if (!selectedCaseId || !isSandboxTarget) return;
+    try {
+      isLoopRunningRef.current = false;
+      const res = await escalateSandboxIncidentApi(selectedCaseId, {
+        reason: "Operator manually triggered human escalation handoff from AI Command Center",
+        operatorName: "Revenue Operations Specialist",
+      });
+      setSandboxDetail(res);
+      setAutonomyStatus("ESCALATED_TO_HUMAN");
+      if ((res as any).record?.escalationDossier) {
+        setEscalationDossier((res as any).record.escalationDossier);
+      }
+      setActiveWorkflowStep("AUDIT");
+    } catch (e: any) {
+      alert(`Escalation failed: ${e.message}`);
+    }
+  };
+
+  // Supabase Case Protected Action Execution
   const handleConfirmRealAction = async () => {
     if (!selectedCaseId || !pendingRealAction) return;
     try {
       setExecutingRealAction(true);
       setActiveWorkflowStep("ACT_SIMULATE");
 
-      if (isSandboxTarget) {
-        const res = await executeSandboxIncidentActionApi(selectedCaseId, {
-          actionType: pendingRealAction,
-          strategyName: analysis?.selectedStrategy,
-          reason: `AI Agent Authorized Action: ${analysis?.strategyJustification || pendingRealAction}`,
-        });
-        setSandboxDetail(res.updatedIncident);
-        setActionSuccess(`Successfully executed sandbox action: ${pendingRealAction}. Telemetry logged to sandbox ledger.`);
-      } else {
-        await executeCaseAction(
-          selectedCaseId,
-          pendingRealAction,
-          `AI Agent Authorized Action: ${analysis?.strategyJustification || pendingRealAction}`
-        );
-        setActionSuccess(`Successfully dispatched real action: ${pendingRealAction}. Audit log recorded in Supabase.`);
-        const updated = await fetchRecoveryCase(selectedCaseId);
-        setCaseDetails(updated);
-      }
+      await executeCaseAction(
+        selectedCaseId,
+        pendingRealAction,
+        `AI Agent Authorized Action: ${analysis?.strategyJustification || pendingRealAction}`
+      );
+      setActionSuccess(
+        `Successfully dispatched real action: ${pendingRealAction}. Immutable audit log written to Supabase.`
+      );
+      const updated = await fetchRecoveryCase(selectedCaseId);
+      setCaseDetails(updated);
 
       setPendingRealAction(null);
       setActiveWorkflowStep("AUDIT");
@@ -254,6 +450,7 @@ export function AIAgentPage() {
     }
   };
 
+  // Contextual Chat
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || chatLoading) return;
@@ -288,47 +485,65 @@ export function AIAgentPage() {
     }
   };
 
-  // Derive active context for display
+  // Derive active context
   const selectedCase = cases.find((c) => c.id === selectedCaseId);
-  const currentCase = isSandboxTarget && sandboxDetail
-    ? {
-        id: sandboxDetail.incident.id,
-        amount_at_risk: sandboxDetail.incident.amount,
-        currency: sandboxDetail.incident.currency || "INR",
-        reason: `${sandboxDetail.incident.failureCode} — ${sandboxDetail.incident.description || sandboxDetail.incident.scenarioTypeName}`,
-        case_type: sandboxDetail.incident.scenarioTypeName,
-        priority: sandboxDetail.incident.amount > 5000 ? "CRITICAL" : "HIGH",
-        status: sandboxDetail.incident.status || "OPEN",
-        customers: {
-          name: sandboxDetail.customer.name,
-          email: sandboxDetail.customer.email,
-        },
-      }
-    : caseDetails?.case || selectedCase;
+  const currentCase =
+    isSandboxTarget && sandboxDetail
+      ? {
+          id: sandboxDetail.incident.id,
+          amount_at_risk: sandboxDetail.incident.amount,
+          currency: sandboxDetail.incident.currency || "INR",
+          reason: `${sandboxDetail.incident.failureCode} — ${sandboxDetail.incident.scenarioTypeName}`,
+          case_type: sandboxDetail.incident.scenarioTypeName,
+          priority: sandboxDetail.incident.amount > 5000 ? "CRITICAL" : "HIGH",
+          status: sandboxDetail.incident.status || "OPEN",
+          customers: {
+            id: sandboxDetail.customer.id,
+            name: sandboxDetail.customer.name,
+            email: sandboxDetail.customer.email,
+            customer_type: sandboxDetail.customer.customer_type,
+          },
+        }
+      : caseDetails?.case || selectedCase;
 
-  const workflowSteps: Array<{ key: AgentWorkflowStep; label: string; number: string; icon: string; desc: string }> = [
+  const workflowSteps: Array<{
+    key: AgentWorkflowStep;
+    label: string;
+    number: string;
+    icon: string;
+    desc: string;
+  }> = [
     { key: "DETECT", label: "Detect", number: "01", icon: "🔍", desc: "Telemetry Anomaly" },
     { key: "ANALYZE", label: "Analyze", number: "02", icon: "🧠", desc: "Root-Cause Reason" },
-    { key: "DECIDE", label: "Decide", number: "03", icon: "🎯", desc: "Optimal Strategy" },
-    { key: "ACT_SIMULATE", label: "Act / Simulate", number: "04", icon: "⚡", desc: "Safe Execution" },
+    { key: "DECIDE", label: "Decide", number: "03", icon: "🎯", desc: "Dynamic Cascade" },
+    { key: "ACT_SIMULATE", label: "Act / Simulate", number: "04", icon: "⚡", desc: "Multi-Rail Dispatch" },
     { key: "OBSERVE", label: "Observe", number: "05", icon: "📊", desc: "Signal Feedback" },
-    { key: "AUDIT", label: "Audit", number: "06", icon: "🛡", desc: "Ledger Log" },
+    { key: "AUDIT", label: "Audit", number: "06", icon: "🛡", desc: "Ledger Ledger" },
   ];
 
   const getStepStatus = (stepKey: AgentWorkflowStep) => {
-    const order: AgentWorkflowStep[] = ["DETECT", "ANALYZE", "DECIDE", "ACT_SIMULATE", "OBSERVE", "AUDIT"];
+    const order: AgentWorkflowStep[] = [
+      "DETECT",
+      "ANALYZE",
+      "DECIDE",
+      "ACT_SIMULATE",
+      "OBSERVE",
+      "AUDIT",
+    ];
     const currentIndex = order.indexOf(activeWorkflowStep);
     const stepIndex = order.indexOf(stepKey);
     if (activeWorkflowStep === stepKey) return "active";
-    if (stepIndex < currentIndex || (analysis && stepIndex <= 2) || (simulatedResult && stepIndex <= 4)) return "completed";
+    if (stepIndex < currentIndex || autonomyStatus === "RECOVERED" || autonomyStatus === "ESCALATED_TO_HUMAN") {
+      return "completed";
+    }
     return "pending";
   };
 
   const suggestedQuestions = [
-    "What is the root cause of this decline?",
-    "When is the optimal time to retry this payment?",
-    "Draft a high-conversion WhatsApp reminder",
-    "Compare instant retry vs 48-hour dunning delay",
+    "Why was this specific channel selected for the first attempt?",
+    "What safety guardrails prevent infinite retries on this account?",
+    "How does the AI adapt if the customer clicks but doesn't complete payment?",
+    "Show root cause and customer telemetry history",
   ];
 
   return (
@@ -336,17 +551,29 @@ export function AIAgentPage() {
       {/* Page Heading */}
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Autonomous Intelligence</div>
-          <h1>AI Agent Command Center</h1>
-          <p>Bounded agentic loops with telemetry grounding, safety guardrails, and real-time audit ledger.</p>
+          <div className="eyebrow">Autonomous Revenue Intelligence</div>
+          <h1>Autonomous AI Agent Command Center</h1>
+          <p>
+            One-time human approval launches a closed-loop recovery agent that autonomously adapts,
+            dispatches, observes telemetry, and escalates at safety boundaries.
+          </p>
         </div>
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
           <div className="agent-badge-pulse">
             <span className="pulse-dot"></span>
-            <span>GEMINI 2.5 / 1.5 PRO ACTIVE</span>
+            <span>GEMINI AUTONOMOUS CORE ACTIVE</span>
           </div>
+          {onNavigate && (
+            <button
+              className="outline-button"
+              style={{ fontSize: "11px" }}
+              onClick={() => onNavigate("recovery-demo")}
+            >
+              + Create Problem in Studio
+            </button>
+          )}
           <button className="outline-button" onClick={loadCasesList} disabled={loadingCases}>
-            ↻ Refresh Cases
+            ↻ Refresh Queue
           </button>
         </div>
       </div>
@@ -354,18 +581,42 @@ export function AIAgentPage() {
       {/* Case Selector Header Bar */}
       <div className="agent-command-header">
         <div className="agent-command-title">
-          <div style={{ width: "36px", height: "36px", background: "#d6f36b", color: "#10212b", borderRadius: "8px", display: "grid", placeItems: "center", fontSize: "18px", fontWeight: 800 }}>
+          <div
+            style={{
+              width: "38px",
+              height: "38px",
+              background: "#d6f36b",
+              color: "#10212b",
+              borderRadius: "8px",
+              display: "grid",
+              placeItems: "center",
+              fontSize: "18px",
+              fontWeight: 800,
+            }}
+          >
             ✦
           </div>
           <div>
-            <strong style={{ fontSize: "14px", display: "block", color: "#f8fafc" }}>Active Recovery Inspection Queue</strong>
-            <span style={{ fontSize: "11px", color: "#94a3b8" }}>Select a live Supabase recovery case to run AI root-cause reasoning and bounded execution</span>
+            <strong style={{ fontSize: "14px", display: "block", color: "#f8fafc" }}>
+              Active Autonomous Recovery Queue
+            </strong>
+            <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+              Select a runtime sandbox incident or live Supabase case for autonomous recovery
+            </span>
           </div>
         </div>
 
         <div className="agent-case-selector-bar">
-          <label style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-            Target Incident / Case:
+          <label
+            style={{
+              fontSize: "11px",
+              color: "#94a3b8",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+            }}
+          >
+            Target Incident:
           </label>
           <select
             className="agent-select"
@@ -374,38 +625,52 @@ export function AIAgentPage() {
             disabled={loadingCases || (cases.length === 0 && sandboxIncidents.length === 0)}
           >
             {sandboxIncidents.length > 0 && (
-              <optgroup label="── 🔒 Sandbox Incidents (Dynamic Studio) ──">
+              <optgroup label="── 🔒 Sandbox Revenue Incidents ──">
                 {sandboxIncidents.map((sb) => (
                   <option key={sb.incident.id} value={sb.incident.id}>
-                    [SANDBOX] {sb.customer.name} — {sb.incident.currency || "₹"}{Number(sb.incident.amount).toLocaleString()} ({sb.incident.failureCode} / {sb.incident.scenarioTypeName})
+                    [SANDBOX] {sb.customer.name} — {sb.incident.currency || "₹"}
+                    {Number(sb.incident.amount).toLocaleString()} ({sb.incident.failureCode} /{" "}
+                    {sb.incident.scenarioTypeName})
                   </option>
                 ))}
               </optgroup>
             )}
 
             {cases.length > 0 && (
-              <optgroup label="── ⚡ Live Supabase Recovery Cases ──">
+              <optgroup label="── ⚡ Supabase Production Cases ──">
                 {cases.map((c) => (
                   <option key={c.id} value={c.id}>
-                    [PROD] {c.customers?.name || "Customer"} — ₹{Number(c.amount_at_risk).toLocaleString()} ({c.reason || c.case_type})
+                    [PROD] {c.customers?.name || "Customer"} — ₹
+                    {Number(c.amount_at_risk).toLocaleString()} ({c.reason || c.case_type})
                   </option>
                 ))}
               </optgroup>
             )}
 
             {cases.length === 0 && sandboxIncidents.length === 0 && (
-              <option value="">No cases or sandbox incidents available</option>
+              <option value="">No incidents or cases found</option>
             )}
           </select>
         </div>
       </div>
 
-      {/* Selected Case Summary Card */}
+      {/* Selected Case Summary Bar */}
       {currentCase && (
         <div className="case-summary-card">
           <div className="case-summary-item">
             <label>Customer Account</label>
-            <strong>{currentCase.customers?.name || "Verified Customer"}</strong>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <strong>{currentCase.customers?.name || "Verified Customer"}</strong>
+              {onSelectCustomer && currentCase.customers?.id && (
+                <button
+                  className="outline-button"
+                  style={{ fontSize: "9.5px", padding: "2px 6px" }}
+                  onClick={() => onSelectCustomer(currentCase.customers!.id)}
+                >
+                  360 Profile
+                </button>
+              )}
+            </div>
             <span>{currentCase.customers?.email || "No email on record"}</span>
           </div>
           <div className="case-summary-item">
@@ -415,33 +680,45 @@ export function AIAgentPage() {
           </div>
           <div className="case-summary-item">
             <label>Amount At Risk</label>
-            <strong style={{ color: "#b91c1c" }}>₹{Number(currentCase.amount_at_risk || 0).toLocaleString()}</strong>
-            <span>Currency: {currentCase.currency || "INR"}</span>
+            <strong style={{ color: "#b91c1c" }}>
+              {currentCase.currency || "₹"}{Number(currentCase.amount_at_risk || 0).toLocaleString()}
+            </strong>
+            <span>Bounded Limit: {maxAttempts} attempts</span>
           </div>
           <div className="case-summary-item">
-            <label>Environment & Status</label>
+            <label>Environment & Autonomy State</label>
             <div style={{ display: "flex", gap: "6px", alignItems: "center", marginTop: "4px" }}>
               {isSandboxTarget ? (
                 <span className="status-pill warning" style={{ fontSize: "10px" }}>
-                  🔒 SANDBOX ISOLATED
+                  🔒 SANDBOX
                 </span>
               ) : (
                 <span className="status-pill success" style={{ fontSize: "10px" }}>
                   ⚡ SUPABASE PROD
                 </span>
               )}
-              <span className={`status-pill ${currentCase.priority === "CRITICAL" ? "danger" : currentCase.priority === "HIGH" ? "warning" : "info"}`}>
-                {currentCase.priority || "MEDIUM"}
-              </span>
-              <span className={`status-pill ${currentCase.status === "RECOVERED" ? "success" : currentCase.status === "OPEN" ? "danger" : "neutral"}`}>
-                {currentCase.status}
+              <span
+                className={`status-pill ${
+                  autonomyStatus === "RECOVERED"
+                    ? "success"
+                    : autonomyStatus === "ESCALATED_TO_HUMAN"
+                    ? "danger"
+                    : autonomyStatus === "RUNNING_LOOP"
+                    ? "purple"
+                    : "info"
+                }`}
+                style={{ fontSize: "10px" }}
+              >
+                {autonomyStatus === "RUNNING_LOOP"
+                  ? `⚡ RUNNING (ITERATION #${currentIteration})`
+                  : autonomyStatus}
               </span>
             </div>
           </div>
         </div>
       )}
 
-      {/* 6-Stage Lifecycle Stepper */}
+      {/* 6-Stage Autonomous Stepper */}
       <div className="agent-stepper">
         {workflowSteps.map((step) => {
           const status = getStepStatus(step.key);
@@ -453,7 +730,9 @@ export function AIAgentPage() {
             >
               <div className="agent-step-icon">{step.icon}</div>
               <div className="agent-step-text">
-                <span className="agent-step-name">{step.number}. {step.label}</span>
+                <span className="agent-step-name">
+                  {step.number}. {step.label}
+                </span>
                 <span className="agent-step-desc">{step.desc}</span>
               </div>
             </div>
@@ -461,24 +740,385 @@ export function AIAgentPage() {
         })}
       </div>
 
-      {/* Success Notification Banner */}
-      {actionSuccess && (
-        <div style={{ background: "#dcfce7", border: "1px solid #86efac", borderRadius: "8px", padding: "12px 16px", marginBottom: "16px", color: "#15803d", fontSize: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
-          <span style={{ fontSize: "16px" }}>✓</span>
-          <span>{actionSuccess}</span>
+      {/* ONE-TIME HUMAN APPROVAL BANNER (When ready to start) */}
+      {isSandboxTarget && autonomyStatus === "IDLE_READY" && currentCase && (
+        <div
+          style={{
+            background: "linear-gradient(135deg, #0d1e2a 0%, #152b3c 100%)",
+            border: "2px solid #22c55e",
+            borderRadius: "12px",
+            padding: "22px 24px",
+            marginBottom: "20px",
+            color: "#f8fafc",
+            boxShadow: "0 10px 25px -5px rgba(34, 197, 94, 0.15)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              flexWrap: "wrap",
+              gap: "16px",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: "280px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                <span
+                  style={{
+                    background: "#22c55e",
+                    color: "#052e16",
+                    fontWeight: 800,
+                    padding: "3px 8px",
+                    borderRadius: "4px",
+                    fontSize: "10px",
+                    letterSpacing: "0.5px",
+                  }}
+                >
+                  AUTONOMOUS RECOVERY READY
+                </span>
+                <span style={{ fontSize: "12px", color: "#94a3b8" }}>
+                  One-time human authorization required to engage closed loop
+                </span>
+              </div>
+              <h2 style={{ fontSize: "20px", margin: "4px 0 8px", color: "#ffffff", fontWeight: 700 }}>
+                Ready to Authorize Autonomous Recovery Loop
+              </h2>
+              <p style={{ fontSize: "13px", color: "#cbd5e1", lineHeight: "20px", margin: "0 0 14px" }}>
+                The operator gives approval <strong>only once</strong>. After launch, the AI agent
+                will autonomously diagnose, select optimal channels (WhatsApp UPI, SMS link, network retry),
+                observe telemetry feedback, and continue until full recovery or safe human escalation handoff.
+              </p>
+
+              {/* Scope & Bounds Checklist */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                  gap: "10px",
+                  background: "rgba(0,0,0,0.25)",
+                  padding: "12px 14px",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                }}
+              >
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Target Customer:</span>
+                  <strong>{currentCase.customers?.name}</strong>
+                </div>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Amount At Risk:</span>
+                  <strong style={{ color: "#d6f36b" }}>
+                    {currentCase.currency || "₹"}{Number(currentCase.amount_at_risk).toLocaleString()}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Safety Limits:</span>
+                  <strong>Bounded Max {maxAttempts} Attempts</strong>
+                </div>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Multi-Channel Rails:</span>
+                  <strong style={{ color: "#38bdf8" }}>WhatsApp, SMS, Gateway, Mandate</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Big Action Buttons */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", minWidth: "220px" }}>
+              <button
+                className="primary-button"
+                style={{
+                  background: "#22c55e",
+                  color: "#052e16",
+                  fontWeight: 800,
+                  fontSize: "14px",
+                  padding: "14px 20px",
+                  borderRadius: "8px",
+                  border: "none",
+                  boxShadow: "0 4px 14px rgba(34, 197, 94, 0.4)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                }}
+                onClick={handleStartAutonomousRecovery}
+              >
+                <span>🟢</span>
+                <span>START AUTONOMOUS RECOVERY</span>
+              </button>
+
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button
+                  className="outline-button"
+                  style={{
+                    flex: 1,
+                    fontSize: "11px",
+                    background: "transparent",
+                    color: "#cbd5e1",
+                    borderColor: "#334155",
+                  }}
+                  onClick={handleRunFullLoopInstant}
+                >
+                  ⚡ Fast-Run (Instant)
+                </button>
+                <button
+                  className="outline-button"
+                  style={{
+                    fontSize: "11px",
+                    background: "transparent",
+                    color: "#cbd5e1",
+                    borderColor: "#334155",
+                  }}
+                  onClick={() => setShowPolicyConfig(!showPolicyConfig)}
+                >
+                  ⚙ Limits
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Main Command Center Two-Column Grid */}
+      {/* RUNNING / ACTIVE LOOP BANNER */}
+      {isSandboxTarget && autonomyStatus === "RUNNING_LOOP" && (
+        <div
+          style={{
+            background: "#0c1b26",
+            border: "1px solid #38bdf8",
+            borderRadius: "10px",
+            padding: "16px 20px",
+            marginBottom: "16px",
+            color: "#f8fafc",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "12px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div
+              className="spinner"
+              style={{ width: "20px", height: "20px", borderWidth: "2px", borderColor: "#38bdf8", borderTopColor: "transparent" }}
+            ></div>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <strong style={{ fontSize: "14px", color: "#38bdf8" }}>
+                  Autonomous Closed Loop in Progress
+                </strong>
+                <span className="status-pill purple" style={{ fontSize: "10px" }}>
+                  Iteration #{currentIteration} of {maxAttempts}
+                </span>
+              </div>
+              <div style={{ fontSize: "12px", color: "#94a3b8", marginTop: "2px" }}>
+                {stepNotice || "Evaluating payment telemetry, formulating next optimal recovery intervention..."}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button className="outline-button" style={{ fontSize: "11px" }} onClick={handlePauseLoop}>
+              ⏸ Pause Automation
+            </button>
+            <button
+              className="outline-button danger"
+              style={{ fontSize: "11px" }}
+              onClick={handleForceHumanEscalate}
+            >
+              🛡 Escalate to Human
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TERMINAL STATE 1: RECOVERY SUCCESS DOSSIER */}
+      {autonomyStatus === "RECOVERED" && recoveryDossier && (
+        <div
+          style={{
+            background: "linear-gradient(135deg, #052e16 0%, #064e3b 100%)",
+            border: "2px solid #22c55e",
+            borderRadius: "12px",
+            padding: "24px",
+            marginBottom: "20px",
+            color: "#f8fafc",
+            boxShadow: "0 10px 25px -5px rgba(34, 197, 94, 0.25)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "14px" }}>
+            <div>
+              <span
+                style={{
+                  background: "#22c55e",
+                  color: "#052e16",
+                  fontWeight: 800,
+                  padding: "3px 8px",
+                  borderRadius: "4px",
+                  fontSize: "11px",
+                  letterSpacing: "0.5px",
+                }}
+              >
+                ✅ AUTONOMOUS RECOVERY CONFIRMED
+              </span>
+              <h2 style={{ fontSize: "22px", margin: "6px 0 4px", color: "#ffffff", fontWeight: 700 }}>
+                100% Revenue Recovered • {recoveryDossier.currency} {recoveryDossier.recoveredAmount.toLocaleString()}
+              </h2>
+              <p style={{ fontSize: "13px", color: "#86efac", margin: "0 0 14px" }}>
+                Recovered in <strong>{recoveryDossier.attemptsCount} iteration(s)</strong> via{" "}
+                <strong>{recoveryDossier.winningAction}</strong>. Payment settled and reconciled with auth code{" "}
+                <code>{recoveryDossier.gatewayAuthCode}</code>.
+              </p>
+            </div>
+
+            <button
+              className="outline-button"
+              style={{ background: "#ffffff", color: "#064e3b", fontWeight: 700, border: "none" }}
+              onClick={handleStartAutonomousRecovery}
+            >
+              ↺ Re-run Simulation
+            </button>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: "12px",
+              background: "rgba(0,0,0,0.3)",
+              padding: "16px",
+              borderRadius: "8px",
+              fontSize: "12px",
+            }}
+          >
+            <div>
+              <span style={{ color: "#86efac", display: "block", fontSize: "10px" }}>Winning Capability</span>
+              <strong>{recoveryDossier.winningCapability}</strong>
+            </div>
+            <div>
+              <span style={{ color: "#86efac", display: "block", fontSize: "10px" }}>Total Iterations</span>
+              <strong>{recoveryDossier.attemptsCount} Attempts ({recoveryDossier.elapsedTime})</strong>
+            </div>
+            <div>
+              <span style={{ color: "#86efac", display: "block", fontSize: "10px" }}>Initial Probability</span>
+              <strong>{Math.round(recoveryDossier.initialProbability * 100)}% → 100% Settled</strong>
+            </div>
+            <div>
+              <span style={{ color: "#86efac", display: "block", fontSize: "10px" }}>Audit Ledger Status</span>
+              <strong style={{ color: "#22c55e" }}>IMMUTABLE_RECONCILED</strong>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TERMINAL STATE 2: HUMAN ESCALATION DOSSIER */}
+      {autonomyStatus === "ESCALATED_TO_HUMAN" && escalationDossier && (
+        <div
+          style={{
+            background: "linear-gradient(135deg, #2a0808 0%, #3f1212 100%)",
+            border: "2px solid #ef4444",
+            borderRadius: "12px",
+            padding: "24px",
+            marginBottom: "20px",
+            color: "#f8fafc",
+            boxShadow: "0 10px 25px -5px rgba(239, 68, 68, 0.25)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "14px" }}>
+            <div>
+              <span
+                style={{
+                  background: "#ef4444",
+                  color: "#450a0a",
+                  fontWeight: 800,
+                  padding: "3px 8px",
+                  borderRadius: "4px",
+                  fontSize: "11px",
+                  letterSpacing: "0.5px",
+                }}
+              >
+                🔴 HUMAN ESCALATION HANDOFF PACKAGE
+              </span>
+              <h2 style={{ fontSize: "20px", margin: "6px 0 4px", color: "#ffffff", fontWeight: 700 }}>
+                Bounded Safety Limit Reached • Handed Off to Operations
+              </h2>
+              <p style={{ fontSize: "13px", color: "#fca5a5", margin: "0 0 14px" }}>
+                {escalationDossier.whyStopped}
+              </p>
+            </div>
+
+            <button
+              className="outline-button"
+              style={{ background: "#ffffff", color: "#7f1d1d", fontWeight: 700, border: "none" }}
+              onClick={handleStartAutonomousRecovery}
+            >
+              ↺ Reset & Re-run
+            </button>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "14px",
+              background: "rgba(0,0,0,0.3)",
+              padding: "16px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              marginBottom: "14px",
+            }}
+          >
+            <div>
+              <span style={{ color: "#fca5a5", display: "block", fontSize: "10px" }}>Recommended Operator Action</span>
+              <strong style={{ color: "#ffffff", fontSize: "12.5px" }}>{escalationDossier.recommendedHumanAction}</strong>
+            </div>
+            <div>
+              <span style={{ color: "#fca5a5", display: "block", fontSize: "10px" }}>Assigned Escalation Tier</span>
+              <strong style={{ color: "#ffffff", fontSize: "12.5px" }}>{escalationDossier.assignedTier}</strong>
+            </div>
+          </div>
+
+          {/* Chronological Timeline of Attempts Tried */}
+          {escalationDossier.attemptsTimeline && escalationDossier.attemptsTimeline.length > 0 && (
+            <div style={{ background: "rgba(0,0,0,0.2)", padding: "12px 14px", borderRadius: "8px" }}>
+              <span style={{ fontSize: "11px", color: "#fca5a5", fontWeight: 600, display: "block", marginBottom: "8px" }}>
+                Chronological Interventions Executed Before Halt:
+              </span>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {escalationDossier.attemptsTimeline.map((item, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: "rgba(255,255,255,0.06)",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      fontSize: "11px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span>
+                      <strong>Attempt #{item.attemptNumber}:</strong> {item.actionTitle} [{item.pspResponseCode}]
+                    </span>
+                    <span style={{ color: "#fca5a5", fontSize: "10px" }}>{item.observation}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Main Two-Column Layout */}
       <div className="agent-grid-layout">
-        {/* Left Column: AI Reasoning Engine & Action Controls */}
+        {/* Left Column: Autonomous Intelligence & Dynamic Execution Trace */}
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {/* Operator Guidance Box */}
           <div className="panel" style={{ padding: "18px 20px" }}>
             <div className="section-heading" style={{ marginBottom: "10px" }}>
               <div>
-                <h2>Operator AI Guidance & Prompt Context</h2>
-                <p>Provide contextual directives to influence strategy generation and dunning tone</p>
+                <h2>Operator AI Directives & Prompt Injection</h2>
+                <p>Provide high-level policy instructions to guide the autonomous cascade</p>
               </div>
             </div>
             <div style={{ display: "flex", gap: "10px" }}>
@@ -486,88 +1126,81 @@ export function AIAgentPage() {
                 type="text"
                 className="search-input"
                 style={{ flex: 1 }}
-                placeholder="E.g., Prioritize customer retention with a zero-friction UPI link and 5-day grace period..."
+                placeholder="E.g., Prioritize retention with dynamic 10% rescue discount on attempt 2..."
                 value={customInstruction}
                 onChange={(e) => setCustomInstruction(e.target.value)}
               />
               <button
                 className="primary-button"
-                onClick={handleRunAgentWorkflow}
-                disabled={analyzing || !selectedCaseId}
+                onClick={handleStartAutonomousRecovery}
+                disabled={isLoopPacing || analyzing}
               >
-                {analyzing ? (
-                  <>
-                    <span className="spinner" style={{ width: "14px", height: "14px", borderWidth: "2px" }}></span>
-                    <span>Analyzing...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>✦</span>
-                    <span>Run Agent</span>
-                  </>
-                )}
+                {isLoopPacing ? "Loop Active..." : "Run Autonomous Loop"}
               </button>
             </div>
           </div>
 
-          {/* AI Intelligence Output Card */}
+          {/* Autonomous Intelligence Diagnosis & Decision Box */}
           <div className="panel">
             <div className="panel-heading">
               <div>
-                <h2>Autonomous Intelligence Synthesis</h2>
-                <p>Telemetry-grounded reasoning, evidence extraction, and probability scoring</p>
+                <h2>Autonomous Decision Engine & Evidence</h2>
+                <p>Telemetry-grounded reasoning, root-cause diagnosis, and dynamically selected actions</p>
               </div>
-              {analysis && (
-                <span className="status-pill success">Gemini Grounded</span>
-              )}
+              {analysis && <span className="status-pill success">Gemini AI Grounded</span>}
             </div>
 
             <div style={{ padding: "20px" }}>
               {analyzing ? (
                 <div className="loading-container">
                   <div className="spinner"></div>
-                  <strong style={{ color: "#1e293b", fontSize: "13px" }}>Running 6-Stage Agentic Reasoning...</strong>
+                  <strong style={{ color: "#1e293b", fontSize: "13px" }}>
+                    Synthesizing Telemetry & Formulating Cascade...
+                  </strong>
                   <span style={{ color: "#64748b", fontSize: "11.5px" }}>
-                    Synthesizing Supabase events, evaluating decline telemetry, and selecting bounded strategy via Gemini...
+                    Analyzing payment disruption patterns via Gemini 2.5 Pro...
                   </span>
                 </div>
               ) : analysisError ? (
-                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "10px", padding: "16px", color: "#991b1b" }}>
+                <div
+                  style={{
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    borderRadius: "10px",
+                    padding: "16px",
+                    color: "#991b1b",
+                  }}
+                >
                   <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "10px" }}>
                     <span style={{ fontSize: "18px" }}>⚠</span>
                     <div>
-                      <strong style={{ fontSize: "12.5px", display: "block" }}>Gemini AI Analysis Notice</strong>
+                      <strong style={{ fontSize: "12.5px", display: "block" }}>AI Notice</strong>
                       <p style={{ fontSize: "11.5px", margin: "4px 0 0", color: "#b91c1c" }}>{analysisError}</p>
                     </div>
                   </div>
-                  <button
-                    className="danger-button"
-                    onClick={handleRunAgentWorkflow}
-                    disabled={analyzing}
-                  >
-                    ⟳ Retry Analysis with Gemini
+                  <button className="danger-button" onClick={handleRunInitialDiagnosis}>
+                    ⟳ Retry Analysis
                   </button>
                 </div>
               ) : !analysis ? (
                 <div className="empty-state" style={{ padding: "36px 20px" }}>
                   <div className="empty-illustration">✦</div>
-                  <h3>Ready for Agent Execution</h3>
-                  <p>Click "Run Agent" above to initiate root-cause discovery, evidence synthesis, and recovery strategy generation for this case.</p>
-                  <button
-                    className="primary-button"
-                    onClick={handleRunAgentWorkflow}
-                    disabled={analyzing || !selectedCaseId}
-                  >
-                    ✦ Run Agent Workflow Now
+                  <h3>Ready for Autonomous Recovery</h3>
+                  <p>
+                    Click "START AUTONOMOUS RECOVERY" above to launch root-cause reasoning, evidence
+                    extraction, and closed-loop execution.
+                  </p>
+                  <button className="primary-button" onClick={handleStartAutonomousRecovery}>
+                    🟢 Start Autonomous Recovery
                   </button>
                 </div>
               ) : (
                 <div>
-                  {/* Executive Assessment */}
+                  {/* Detected Risk */}
                   <div className="ai-section-box">
                     <div className="ai-section-title">
-                      <span>1. Detected Risk & Assessment</span>
-                      <span className="status-pill warning">{analysis.detectedRisk ? "Risk Flagged" : "Evaluated"}</span>
+                      <span>1. Telemetry Anomaly & Risk</span>
+                      <span className="status-pill warning">Anomaly Flagged</span>
                     </div>
                     <p style={{ fontSize: "12px", color: "#1e293b", lineHeight: "18px", margin: "4px 0 8px" }}>
                       {analysis.summary}
@@ -587,15 +1220,15 @@ export function AIAgentPage() {
                   <div className="ai-section-box">
                     <div className="ai-section-title">
                       <span>2. Synthesized Telemetry Evidence</span>
-                      <span style={{ fontSize: "9.5px", color: "#64748b" }}>Supabase Logs Grounded</span>
+                      <span style={{ fontSize: "9.5px", color: "#64748b" }}>Ground Truth</span>
                     </div>
                     <div className="evidence-tag-list">
                       {(analysis.relevantEvidence && analysis.relevantEvidence.length > 0
                         ? analysis.relevantEvidence
                         : [
-                            `Decline reason: "${currentCase?.reason}" registered at gateway`,
-                            `Historical customer volume: ₹${Number(currentCase?.amount_at_risk).toLocaleString()} at risk`,
-                            `Associated trigger event: ${currentCase?.case_type}`,
+                            `Decline reason: "${currentCase?.reason}" registered at payment rail`,
+                            `Amount at risk: ₹${Number(currentCase?.amount_at_risk).toLocaleString()}`,
+                            `Customer category: ${currentCase?.case_type}`,
                           ]
                       ).map((ev, i) => (
                         <div key={i} className="evidence-tag-item">
@@ -610,20 +1243,38 @@ export function AIAgentPage() {
                   <div className="ai-section-box">
                     <div className="ai-section-title">
                       <span>3. Root-Cause Analysis</span>
-                      <span style={{ fontSize: "9.5px", color: "#64748b" }}>Reasoning Core</span>
+                      <span style={{ fontSize: "9.5px", color: "#64748b" }}>Gemini Core</span>
                     </div>
                     <p style={{ fontSize: "12px", color: "#334155", lineHeight: "18px", margin: "4px 0" }}>
                       {analysis.rootCauseAnalysis}
                     </p>
                   </div>
 
-                  {/* Selected Strategy Callout */}
+                  {/* Strategy Selection */}
                   <div className="strategy-callout">
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: "10px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "1px" }}>
+                      <span
+                        style={{
+                          fontFamily: "'DM Mono', monospace",
+                          fontSize: "10px",
+                          color: "#94a3b8",
+                          textTransform: "uppercase",
+                          letterSpacing: "1px",
+                        }}
+                      >
                         4. Autonomous Strategy Selection
                       </span>
-                      <span style={{ background: "#223746", color: "#d6f36b", padding: "2px 8px", borderRadius: "4px", fontSize: "9.5px", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+                      <span
+                        style={{
+                          background: "#223746",
+                          color: "#d6f36b",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          fontSize: "9.5px",
+                          fontFamily: "'DM Mono', monospace",
+                          fontWeight: 700,
+                        }}
+                      >
                         {analysis.optimalTiming || "Immediate"}
                       </span>
                     </div>
@@ -632,12 +1283,20 @@ export function AIAgentPage() {
                       <span>{analysis.selectedStrategy || analysis.recommendedAction}</span>
                     </div>
                     <p style={{ fontSize: "11.5px", color: "#cbd5e1", lineHeight: "17px", margin: "0 0 12px" }}>
-                      {analysis.strategyJustification || "Strategy tailored to maximize recovery conversion while preserving customer trust."}
+                      {analysis.strategyJustification ||
+                        "Strategy tailored to maximize recovery conversion while preserving customer trust."}
                     </p>
 
-                    {/* Confidence Meter & Expected Recovery */}
+                    {/* Confidence Meter */}
                     <div className="confidence-bar-container">
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "4px" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: "11px",
+                          marginBottom: "4px",
+                        }}
+                      >
                         <span style={{ color: "#94a3b8" }}>Recovery Probability Score</span>
                         <strong style={{ color: "#34d399" }}>
                           {Math.round(analysis.recoveryProbabilityScore * 100)}%
@@ -650,23 +1309,27 @@ export function AIAgentPage() {
                         ></div>
                       </div>
                     </div>
-
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px", paddingTop: "10px", borderTop: "1px solid #223746", fontSize: "11.5px" }}>
-                      <span style={{ color: "#94a3b8" }}>Expected Recoverable Revenue:</span>
-                      <strong style={{ color: "#d6f36b", fontSize: "13px", fontFamily: "'DM Mono', monospace" }}>
-                        ₹{(analysis.expectedRecoverableRevenue || Math.round(Number(currentCase?.amount_at_risk || 0) * analysis.recoveryProbabilityScore)).toLocaleString()}
-                      </strong>
-                    </div>
                   </div>
 
-                  {/* Tailored Communication Draft */}
+                  {/* Customer Message Draft */}
                   {analysis.tailoredMessageDraft && (
                     <div className="ai-section-box">
                       <div className="ai-section-title">
-                        <span>Tailored Recovery Message Draft</span>
-                        <span className="status-pill info">Multi-Channel</span>
+                        <span>Customer Communication Draft</span>
+                        <span className="status-pill info">Multi-Rail</span>
                       </div>
-                      <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: "6px", padding: "10px 12px", fontSize: "11.5px", color: "#334155", lineHeight: "17px", whiteSpace: "pre-line" }}>
+                      <div
+                        style={{
+                          background: "#ffffff",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "6px",
+                          padding: "10px 12px",
+                          fontSize: "11.5px",
+                          color: "#334155",
+                          lineHeight: "17px",
+                          whiteSpace: "pre-line",
+                        }}
+                      >
                         {analysis.tailoredMessageDraft}
                       </div>
                     </div>
@@ -675,31 +1338,9 @@ export function AIAgentPage() {
               )}
             </div>
 
-            {/* Simulated Result Callout */}
-            {simulatedResult && (
-              <div style={{ padding: "0 20px 16px" }}>
-                <div className="simulation-banner">
-                  <span className="simulation-badge">SIMULATION FEEDBACK</span>
-                  <div style={{ fontSize: "11.5px", color: "#1e3a8a", lineHeight: "17px" }}>
-                    <strong>{simulatedResult.actionName}</strong> • {simulatedResult.timestamp}
-                    <div style={{ marginTop: "2px", color: "#2563eb" }}>{simulatedResult.telemetry}</div>
-                    <div style={{ marginTop: "2px", fontWeight: 700 }}>{simulatedResult.projectedOutcome}</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Action Bar */}
-            {analysis && (
+            {/* Action Bar for Supabase Cases */}
+            {!isSandboxTarget && analysis && (
               <div className="agent-action-bar">
-                <button
-                  className="outline-button"
-                  onClick={() => handleSimulateAction(analysis.recommendedAction || "SMART_RETRY")}
-                  disabled={!!simulatingAction || executingRealAction}
-                >
-                  {simulatingAction ? "Simulating Sandbox..." : "⚡ Simulate Action (Sandbox)"}
-                </button>
-
                 <button
                   className="primary-button"
                   onClick={() => setPendingRealAction(analysis.recommendedAction || "SMART_RETRY")}
@@ -707,11 +1348,10 @@ export function AIAgentPage() {
                 >
                   🔒 Authorize Real Action
                 </button>
-
                 <button
                   className="outline-button"
                   style={{ marginLeft: "auto" }}
-                  onClick={handleRunAgentWorkflow}
+                  onClick={handleRunInitialDiagnosis}
                   disabled={analyzing}
                 >
                   ⟳ Re-analyze
@@ -719,11 +1359,71 @@ export function AIAgentPage() {
               </div>
             )}
           </div>
+
+          {/* Autonomous Execution Trace Log */}
+          {executionTrace.length > 0 && (
+            <div className="panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Autonomous Closed-Loop Execution Trace ({executionTrace.length} Steps)</h2>
+                  <p>Step-by-step trace of decisions, simulated executions, and observed feedback</p>
+                </div>
+              </div>
+              <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                {executionTrace.map((step, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: "8px",
+                      padding: "12px 14px",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                      <strong>
+                        Iteration #{step.iteration}: {step.decidedAction?.actionTitle || "Autonomous Intervention"}
+                      </strong>
+                      <span
+                        className={`status-pill ${
+                          step.simulatedOutcome?.isSettled
+                            ? "success"
+                            : step.isTerminal
+                            ? "danger"
+                            : "purple"
+                        }`}
+                        style={{ fontSize: "9.5px" }}
+                      >
+                        {step.simulatedOutcome?.pspResponseCode || step.agentState}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#64748b", margin: "2px 0 6px" }}>
+                      <strong>AI Decision:</strong> {step.decidedAction?.decisionRationale}
+                    </div>
+                    <div
+                      style={{
+                        background: "#ffffff",
+                        padding: "6px 8px",
+                        borderRadius: "4px",
+                        border: "1px solid #e2e8f0",
+                        fontSize: "10.5px",
+                        color: "#334155",
+                      }}
+                    >
+                      📊 <strong>Observed:</strong> {step.simulatedOutcome?.observation} (Latency:{" "}
+                      {step.simulatedOutcome?.latency})
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Right Column: Audit Activity Timeline & Contextual AI Chat */}
+        {/* Right Column: Timeline & Contextual AI Chat */}
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          {/* Audit & Activity Timeline */}
+          {/* Recovery Audit & Activity Ledger */}
           <div className="panel">
             <div className="panel-heading">
               <div>
@@ -736,69 +1436,54 @@ export function AIAgentPage() {
               {loadingCase ? (
                 <div className="loading-container" style={{ padding: "20px" }}>
                   <div className="spinner"></div>
-                  <span>Loading timeline...</span>
+                  <span>Loading ledger...</span>
                 </div>
               ) : isSandboxTarget && sandboxDetail ? (
                 <>
-                  <div className="timeline-entry">
-                    <div className="timeline-dot active">🚨</div>
-                    <div className="timeline-content">
-                      <div className="timeline-header">
-                        <span className="timeline-title">SANDBOX_INCIDENT_SPAWNED</span>
-                        <span className="timeline-time">
-                          {new Date(sandboxDetail.incident.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                      </div>
-                      <div className="timeline-body">
-                        {sandboxDetail.incident.scenarioTypeName} • Code: {sandboxDetail.incident.failureCode} • Rail: {sandboxDetail.incident.paymentMethod}
-                      </div>
-                      <span className="status-pill warning" style={{ marginTop: "6px" }}>
-                        SANDBOX_ISOLATED
-                      </span>
-                    </div>
-                  </div>
-
-                  {sandboxDetail.auditLog && sandboxDetail.auditLog.map((log: any) => (
-                    <div key={log.id} className="timeline-entry">
-                      <div className="timeline-dot success">🛡</div>
-                      <div className="timeline-content">
-                        <div className="timeline-header">
-                          <span className="timeline-title">{log.actionType || log.event || "AUDIT_LOG"}</span>
-                          <span className="timeline-time">
-                            {new Date(log.timestamp || log.created_at || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {sandboxDetail.lifecycle &&
+                    sandboxDetail.lifecycle.map((lc, idx) => (
+                      <div key={idx} className="timeline-entry">
+                        <div
+                          className={`timeline-dot ${
+                            lc.status === "COMPLETED" ? "success" : "active"
+                          }`}
+                        >
+                          {lc.step === "DETECT"
+                            ? "🚨"
+                            : lc.step === "ANALYZE"
+                            ? "🧠"
+                            : lc.step === "DECIDE"
+                            ? "🎯"
+                            : lc.step === "ACT_SIMULATE"
+                            ? "⚡"
+                            : lc.step === "OBSERVE"
+                            ? "📊"
+                            : "🛡"}
+                        </div>
+                        <div className="timeline-content">
+                          <div className="timeline-header">
+                            <span className="timeline-title">{lc.title}</span>
+                            <span className="timeline-time">{lc.timestamp}</span>
+                          </div>
+                          <div className="timeline-body">{lc.detail}</div>
+                          <span
+                            className={`status-pill ${
+                              lc.status === "COMPLETED" ? "success" : "purple"
+                            }`}
+                            style={{ marginTop: "4px", fontSize: "9px" }}
+                          >
+                            {lc.step}
                           </span>
                         </div>
-                        <div className="timeline-body">{log.details || log.reason || "Autonomous action recorded"}</div>
-                        <span className="status-pill purple" style={{ marginTop: "6px" }}>
-                          {log.actor || "AI_AGENT"}
-                        </span>
                       </div>
-                    </div>
-                  ))}
-
-                  {sandboxDetail.simulation && (
-                    <div className="timeline-entry">
-                      <div className="timeline-dot active">⚡</div>
-                      <div className="timeline-content">
-                        <div className="timeline-header">
-                          <span className="timeline-title">SIMULATED_DISPATCH</span>
-                          <span className="timeline-time">
-                            {new Date(sandboxDetail.simulation.executedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                        </div>
-                        <div className="timeline-body">
-                          Simulated gateway response: {sandboxDetail.simulation.simulatedGatewayResponse.authCode} ({sandboxDetail.simulation.simulatedGatewayResponse.latencyMs}ms)
-                        </div>
-                        <span className="status-pill success" style={{ marginTop: "6px" }}>
-                          {sandboxDetail.simulation.status}
-                        </span>
-                      </div>
-                    </div>
-                  )}
+                    ))}
                 </>
-              ) : !caseDetails || (caseDetails.paymentEvents.length === 0 && caseDetails.actions.length === 0 && caseDetails.auditLogs.length === 0) ? (
+              ) : !caseDetails ||
+                (caseDetails.paymentEvents.length === 0 &&
+                  caseDetails.actions.length === 0 &&
+                  caseDetails.auditLogs.length === 0) ? (
                 <div style={{ textAlign: "center", padding: "20px", color: "#94a3b8", fontSize: "11px" }}>
-                  No historical ledger events for this recovery case yet.
+                  No historical ledger events recorded yet.
                 </div>
               ) : (
                 <>
@@ -809,34 +1494,24 @@ export function AIAgentPage() {
                         <div className="timeline-header">
                           <span className="timeline-title">{act.action_type}</span>
                           <span className="timeline-time">
-                            {new Date(act.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            {new Date(act.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
                           </span>
                         </div>
                         <div className="timeline-body">{act.reason || "Action triggered"}</div>
-                        <span className={`status-pill ${act.status === "EXECUTED" ? "success" : "warning"}`} style={{ marginTop: "6px" }}>
+                        <span
+                          className={`status-pill ${
+                            act.status === "EXECUTED" ? "success" : "warning"
+                          }`}
+                          style={{ marginTop: "6px" }}
+                        >
                           {act.status}
                         </span>
                       </div>
                     </div>
                   ))}
-
-                  {caseDetails.paymentEvents.map((ev) => (
-                    <div key={ev.id} className="timeline-entry">
-                      <div className="timeline-dot">💳</div>
-                      <div className="timeline-content">
-                        <div className="timeline-header">
-                          <span className="timeline-title">{ev.event_type}</span>
-                          <span className="timeline-time">
-                            {new Date(ev.occurred_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                        </div>
-                        <div className="timeline-body">
-                          Amount: ₹{Number(ev.amount).toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-
                   {caseDetails.auditLogs.map((log) => (
                     <div key={log.id} className="timeline-entry">
                       <div className="timeline-dot success">🛡</div>
@@ -844,7 +1519,10 @@ export function AIAgentPage() {
                         <div className="timeline-header">
                           <span className="timeline-title">{log.event}</span>
                           <span className="timeline-time">
-                            {new Date(log.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            {new Date(log.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
                           </span>
                         </div>
                         <div className="timeline-body">Actor: {log.actor_type}</div>
@@ -856,18 +1534,27 @@ export function AIAgentPage() {
             </div>
           </div>
 
-          {/* Contextual AI Chat Panel */}
+          {/* Contextual Case AI Chat */}
           <div className="panel agent-chat-card">
             <div className="panel-heading">
               <div>
-                <h2>Contextual Case AI Chat</h2>
-                <p>Ask questions regarding case telemetry and recovery strategy</p>
+                <h2>Contextual Incident AI Chat</h2>
+                <p>Ground questions directly on active telemetry and customer context</p>
               </div>
-              <span className="status-pill neutral">Active Case Grounded</span>
+              <span className="status-pill neutral">Active Grounding</span>
             </div>
 
             {/* Quick Suggestion Chips */}
-            <div style={{ display: "flex", gap: "6px", overflowX: "auto", padding: "10px 14px 6px", background: "#f8fafc", borderBottom: "1px solid #edf1f4" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: "6px",
+                overflowX: "auto",
+                padding: "10px 14px 6px",
+                background: "#f8fafc",
+                borderBottom: "1px solid #edf1f4",
+              }}
+            >
               {suggestedQuestions.map((q, i) => (
                 <button
                   key={i}
@@ -901,7 +1588,7 @@ export function AIAgentPage() {
               <input
                 type="text"
                 className="chat-input-field"
-                placeholder="Ask about decline reasons, customer risk, or dunning..."
+                placeholder="Ask about decline codes, customer history, or recovery logic..."
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 disabled={chatLoading}
@@ -919,32 +1606,60 @@ export function AIAgentPage() {
         </div>
       </div>
 
-      {/* Confirmation Modal for Protected Real Action */}
+      {/* Confirmation Modal for Protected Real Supabase Action */}
       {pendingRealAction && (
         <div className="modal-backdrop" onClick={() => setPendingRealAction(null)}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>🔒 Protected Action Confirmation</h2>
-              <button className="icon-button" onClick={() => setPendingRealAction(null)}>✕</button>
+              <h2>🔒 Protected Operational Action</h2>
+              <button className="icon-button" onClick={() => setPendingRealAction(null)}>
+                ✕
+              </button>
             </div>
             <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: "8px", padding: "12px 14px", color: "#92400e", fontSize: "12px", marginBottom: "14px" }}>
-                <strong>Operational Safeguard Active:</strong> You are about to authorize a real operational recovery action. An immutable audit record will be written to Supabase.
+              <div
+                style={{
+                  background: "#fef3c7",
+                  border: "1px solid #fde68a",
+                  borderRadius: "8px",
+                  padding: "12px 14px",
+                  color: "#92400e",
+                  fontSize: "12px",
+                }}
+              >
+                <strong>Operational Safeguard Active:</strong> You are about to authorize a real operational
+                action on Supabase case {currentCase?.id}.
               </div>
 
               <div style={{ fontSize: "12px", color: "#334155", lineHeight: "20px" }}>
-                <div><strong>Target Case:</strong> {currentCase?.id}</div>
-                <div><strong>Customer:</strong> {currentCase?.customers?.name} ({currentCase?.customers?.email})</div>
-                <div><strong>Action to Execute:</strong> <span className="status-pill purple">{pendingRealAction}</span></div>
-                <div><strong>Amount at Stake:</strong> ₹{Number(currentCase?.amount_at_risk).toLocaleString()}</div>
+                <div>
+                  <strong>Target Case:</strong> {currentCase?.id}
+                </div>
+                <div>
+                  <strong>Customer:</strong> {currentCase?.customers?.name} ({currentCase?.customers?.email})
+                </div>
+                <div>
+                  <strong>Action:</strong> <span className="status-pill purple">{pendingRealAction}</span>
+                </div>
+                <div>
+                  <strong>Amount At Risk:</strong> ₹{Number(currentCase?.amount_at_risk).toLocaleString()}
+                </div>
               </div>
             </div>
             <div className="modal-footer">
-              <button className="outline-button" onClick={() => setPendingRealAction(null)} disabled={executingRealAction}>
+              <button
+                className="outline-button"
+                onClick={() => setPendingRealAction(null)}
+                disabled={executingRealAction}
+              >
                 Cancel
               </button>
-              <button className="primary-button" onClick={handleConfirmRealAction} disabled={executingRealAction}>
-                {executingRealAction ? "Executing..." : "Confirm & Execute Action"}
+              <button
+                className="primary-button"
+                onClick={handleConfirmRealAction}
+                disabled={executingRealAction}
+              >
+                {executingRealAction ? "Executing..." : "Confirm & Dispatch"}
               </button>
             </div>
           </div>
