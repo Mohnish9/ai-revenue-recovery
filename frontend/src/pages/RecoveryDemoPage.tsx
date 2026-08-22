@@ -1,729 +1,1417 @@
 import React, { useState, useEffect } from "react";
-import type { DemoScenarioItem, DemoScenarioFullResponse } from "../lib/types";
-import { fetchDemoScenariosApi, analyzeDemoScenarioApi } from "../lib/api";
+import type {
+  ScenarioTypeConfig,
+  SandboxIncidentResponse,
+  SandboxSimulationResult,
+  Customer,
+} from "../lib/types";
+import {
+  fetchScenarioTypesApi,
+  fetchSandboxIncidentsApi,
+  fetchSandboxIncidentApi,
+  createSandboxIncidentApi,
+  analyzeSandboxIncidentApi,
+  executeSandboxIncidentActionApi,
+  deleteSandboxIncidentApi,
+  fetchCustomers,
+} from "../lib/api";
+
+type ActiveTab = "INTELLIGENCE" | "MESSAGES" | "SUPABASE_CONTEXT" | "AUDIT_TRAIL";
+type MessageChannel = "WHATSAPP" | "SMS" | "EMAIL";
 
 export function RecoveryDemoPage() {
-  const [scenarios, setScenarios] = useState<DemoScenarioItem[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string>("insufficient-funds");
-  const [loadingScenarios, setLoadingScenarios] = useState<boolean>(true);
-  const [loadingAnalysis, setLoadingAnalysis] = useState<boolean>(false);
-  const [activeData, setActiveData] = useState<DemoScenarioFullResponse | null>(null);
+  // Scenario types, Supabase customers, and persisted sandbox incidents
+  const [scenarioTypes, setScenarioTypes] = useState<ScenarioTypeConfig[]>([]);
+  const [supabaseCustomers, setSupabaseCustomers] = useState<Customer[]>([]);
+  const [sandboxIncidentsList, setSandboxIncidentsList] = useState<SandboxIncidentResponse[]>([]);
+  const [loadingInitial, setLoadingInitial] = useState<boolean>(true);
+  const [showIncidentsDrawer, setShowIncidentsDrawer] = useState<boolean>(false);
+
+  // Creation Form State
+  const [selectedTypeKey, setSelectedTypeKey] = useState<string>("insufficient-funds");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
+  const [isCustomCustomer, setIsCustomCustomer] = useState<boolean>(false);
+  const [customName, setCustomName] = useState<string>("");
+  const [customEmail, setCustomEmail] = useState<string>("");
+  const [customType, setCustomType] = useState<string>("INDIVIDUAL");
+
+  const [amount, setAmount] = useState<number>(7800);
+  const [currency, setCurrency] = useState<string>("INR");
+  const [paymentMethod, setPaymentMethod] = useState<string>("HDFC Visa Credit Card (•••• 4829)");
+  const [failureCode, setFailureCode] = useState<string>("ERR_INSUFFICIENT_FUNDS_51");
+  const [severity, setSeverity] = useState<"LOW" | "MEDIUM" | "HIGH" | "CRITICAL">("HIGH");
+  const [billingContext, setBillingContext] = useState<string>(
+    "Primary credit card debited for monthly SaaS tier rejected with ERR_INSUFFICIENT_FUNDS during 04:00 AM automated batch debit. Customer has high historical LTV and active product engagement."
+  );
   const [customInstruction, setCustomInstruction] = useState<string>("");
-  const [selectedChannel, setSelectedChannel] = useState<"whatsapp" | "sms" | "email">("whatsapp");
-  const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
-  const [copiedChannel, setCopiedChannel] = useState<string | null>(null);
 
-  // Simulation sandbox state
-  const [simulatingAction, setSimulatingAction] = useState<string | null>(null);
-  const [simulationLog, setSimulationLog] = useState<{
-    action: string;
-    timestamp: string;
-    status: string;
-    message: string;
-    projectedLift: string;
-    telemetry: string;
-  } | null>(null);
+  // Incident & Agent Execution State
+  const [activeIncident, setActiveIncident] = useState<SandboxIncidentResponse | null>(null);
+  const [analyzingIncident, setAnalyzingIncident] = useState<boolean>(false);
+  const [incidentError, setIncidentError] = useState<string | null>(null);
 
-  // Load scenarios on mount
+  // Simulation & Action Execution State
+  const [executingAction, setExecutingAction] = useState<string | null>(null);
+  const [simulationResult, setSimulationResult] = useState<SandboxSimulationResult | null>(null);
+
+  // Re-analysis state
+  const [reanalyzing, setReanalyzing] = useState<boolean>(false);
+  const [reanalysisPrompt, setReanalysisPrompt] = useState<string>("");
+
+  // Workspace UI Tabs
+  const [activeTab, setActiveTab] = useState<ActiveTab>("INTELLIGENCE");
+  const [messageChannel, setMessageChannel] = useState<MessageChannel>("WHATSAPP");
+
+  // Load initial scenario types, Supabase customers, and persisted sandbox incidents
+  const refreshIncidentsList = async () => {
+    try {
+      const list = await fetchSandboxIncidentsApi();
+      setSandboxIncidentsList(list);
+      return list;
+    } catch (err) {
+      console.warn("Failed to fetch sandbox incidents list:", err);
+      return [];
+    }
+  };
+
   useEffect(() => {
-    async function loadScenarios() {
+    async function loadInitialData() {
       try {
-        setLoadingScenarios(true);
-        const data = await fetchDemoScenariosApi();
-        setScenarios(data);
-        if (data.length > 0) {
-          setSelectedKey(data[0].key);
+        setLoadingInitial(true);
+        const [types, customers, incidents] = await Promise.all([
+          fetchScenarioTypesApi().catch(() => []),
+          fetchCustomers(50).catch(() => []),
+          fetchSandboxIncidentsApi().catch(() => []),
+        ]);
+        setScenarioTypes(types);
+        setSupabaseCustomers(customers);
+        setSandboxIncidentsList(incidents);
+
+        if (customers.length > 0) {
+          setSelectedCustomerId(customers[0].id);
+        }
+
+        // If there is already a persisted incident, load the most recent one
+        if (incidents.length > 0) {
+          setActiveIncident(incidents[0]);
         }
       } catch (err) {
-        console.error("Failed to load demo scenarios", err);
+        console.warn("Failed to load initial sandbox data:", err);
       } finally {
-        setLoadingScenarios(false);
+        setLoadingInitial(false);
       }
     }
-    loadScenarios();
+    loadInitialData();
   }, []);
 
-  // Fetch AI analysis for selected scenario
-  const runAnalysis = async (key: string, instruction?: string) => {
+  // When scenario type selection changes, populate smart defaults
+  const handleScenarioTypeSelect = (typeKey: string) => {
+    setSelectedTypeKey(typeKey);
+    const chosenType = scenarioTypes.find((t) => t.key === typeKey);
+    if (chosenType) {
+      setAmount(chosenType.suggestedAmount);
+      setPaymentMethod(chosenType.defaultPaymentMethod);
+      setFailureCode(chosenType.defaultFailureCode);
+      setSeverity(chosenType.defaultSeverity);
+      setBillingContext(chosenType.sampleBillingContext);
+    }
+  };
+
+  // Submit and create dynamic sandbox incident
+  const handleCreateIncident = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     try {
-      setLoadingAnalysis(true);
-      setSimulationLog(null);
-      const res = await analyzeDemoScenarioApi(key, instruction);
-      setActiveData(res);
-      if (res.scenario?.defaultChannel) {
-        setSelectedChannel(res.scenario.defaultChannel.toLowerCase() as "whatsapp" | "sms" | "email");
-      }
-    } catch (err) {
-      console.error("Failed to analyze scenario with AI", err);
+      setAnalyzingIncident(true);
+      setIncidentError(null);
+      setSimulationResult(null);
+
+      const input = {
+        scenarioTypeKey: selectedTypeKey,
+        customerId: isCustomCustomer ? undefined : selectedCustomerId,
+        customerCustom: isCustomCustomer
+          ? {
+              name: customName.trim() || "Sandbox Customer",
+              email: customEmail.trim() || "sandbox.customer@example.test",
+              customer_type: customType,
+            }
+          : undefined,
+        amount: Number(amount) || 5000,
+        currency,
+        paymentMethod: paymentMethod.trim() || "Standard Card / Rail",
+        failureCode: failureCode.trim() || "ERR_PAYMENT_DECLINE",
+        severity,
+        billingContext: billingContext.trim() || "Sandbox revenue incident created by operator.",
+        customInstruction: customInstruction.trim() || undefined,
+      };
+
+      const result = await createSandboxIncidentApi(input);
+      setActiveIncident(result);
+      setActiveTab("INTELLIGENCE");
+      await refreshIncidentsList();
+    } catch (err: any) {
+      console.error("Failed to create and analyze sandbox incident:", err);
+      setIncidentError(err?.message || "Failed to create sandbox incident with AI analysis");
     } finally {
-      setLoadingAnalysis(false);
+      setAnalyzingIncident(false);
     }
   };
 
-  useEffect(() => {
-    if (selectedKey) {
-      runAnalysis(selectedKey);
+  // Select an existing incident from the persisted store
+  const handleSelectIncident = async (id: string) => {
+    try {
+      const inc = await fetchSandboxIncidentApi(id);
+      setActiveIncident(inc);
+      setSimulationResult(null);
+      setShowIncidentsDrawer(false);
+      setActiveTab("INTELLIGENCE");
+    } catch (err: any) {
+      console.error("Failed to fetch selected incident:", err);
     }
-  }, [selectedKey]);
-
-  const handleCustomPromptSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedKey) return;
-    runAnalysis(selectedKey, customInstruction);
   };
 
-  const handleCopyMessage = (text: string, channel: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedChannel(channel);
-    setTimeout(() => setCopiedChannel(null), 2200);
+  // Delete an incident from the persisted store
+  const handleDeleteIncident = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    try {
+      await deleteSandboxIncidentApi(id);
+      if (activeIncident?.incident.id === id) {
+        setActiveIncident(null);
+        setSimulationResult(null);
+      }
+      await refreshIncidentsList();
+    } catch (err) {
+      console.warn("Failed to delete incident:", err);
+    }
   };
 
-  const handleRunSimulation = (actionName: string) => {
-    setSimulatingAction(actionName);
-    setTimeout(() => {
-      setSimulatingAction(null);
-      const prob = activeData?.analysis.recoveryProbability || 0.75;
-      const expectedSettlement = Math.round(prob * 100);
-      setSimulationLog({
-        action: actionName,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        status: "200 OK (SANDBOX DISPATCH)",
-        message: `Simulated ${actionName} dispatched via webhook sandbox. Gateway ACK received in 142ms with 0 database mutations.`,
-        projectedLift: `+${expectedSettlement}% Projected Settlement Rate`,
-        telemetry: `Routing Rule: Auto-Dunning v3.4 | Acquirer Failover: Enabled | Idempotency Key: IDEM-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
+  // Re-run AI analysis on the active incident (e.g. if key was just added or with new directive)
+  const handleReanalyzeWithAI = async () => {
+    if (!activeIncident) return;
+    try {
+      setReanalyzing(true);
+      setIncidentError(null);
+      const updated = await analyzeSandboxIncidentApi(
+        activeIncident.incident.id,
+        reanalysisPrompt.trim() || undefined
+      );
+      setActiveIncident(updated);
+      await refreshIncidentsList();
+    } catch (err: any) {
+      console.error("Re-analysis failed:", err);
+      setIncidentError(err?.message || "AI Analysis failed to complete.");
+    } finally {
+      setReanalyzing(false);
+    }
+  };
+
+  // Execute a sandbox recovery action
+  const handleExecuteAction = async (actionType: string, strategyName?: string) => {
+    if (!activeIncident) return;
+    try {
+      setExecutingAction(actionType);
+      const result = await executeSandboxIncidentActionApi(activeIncident.incident.id, {
+        actionType,
+        strategyName: strategyName || activeIncident.analysis.selectedStrategy,
+        reason: `Operator triggered action ${actionType} via Sandbox Recovery Studio`,
+        operatorInfo: { name: "Sandbox Operator", email: "operator@recoverly.test" },
       });
-    }, 750);
+
+      setSimulationResult(result.simulation);
+      setActiveIncident(result.updatedIncident);
+      await refreshIncidentsList();
+    } catch (err: any) {
+      console.error("Failed to execute action:", err);
+      setIncidentError(err?.message || "Failed to execute recovery action");
+    } finally {
+      setExecutingAction(null);
+    }
   };
 
-  const categories = [
-    { id: "ALL", label: "All Scenarios" },
-    { id: "CARD", label: "Card Declines" },
-    { id: "UPI", label: "UPI & Mandates" },
-    { id: "INVOICE", label: "B2B Invoices" },
-    { id: "SUBSCRIPTION", label: "Subscriptions" },
-    { id: "CHECKOUT", label: "Drop-Offs" },
-    { id: "CHURN", label: "Churn Risk" },
-  ];
+  // Reset to create a brand new incident
+  const handleResetToNewIncident = () => {
+    setActiveIncident(null);
+    setSimulationResult(null);
+    setIncidentError(null);
+  };
 
-  const filteredScenarios = scenarios.filter((s) => {
-    if (categoryFilter === "ALL") return true;
-    return s.category === categoryFilter;
-  });
+  const selectedCustomerObj = isCustomCustomer
+    ? null
+    : supabaseCustomers.find((c) => c.id === selectedCustomerId) || supabaseCustomers[0];
 
-  const currentScenario = scenarios.find((s) => s.key === selectedKey) || scenarios[0];
-  const analysis = activeData?.analysis;
-  const customer = activeData?.customer || currentScenario?.customer;
-  const context = activeData?.context;
+  const currentTypeConfig = scenarioTypes.find((t) => t.key === selectedTypeKey) || scenarioTypes[0];
 
-  const recoveryProbPct = Math.round((analysis?.recoveryProbability || 0.75) * 100);
-  const amountAtRisk = currentScenario?.amount ?? 0;
-  const expectedRev = analysis?.expectedRecoverableRevenue ?? Math.round(amountAtRisk * 0.75);
-  const currency = currentScenario?.currency || "INR";
+  const amountPresets = [2499, 4500, 7800, 14200, 25000, 50000];
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-16">
-      {/* Top Header & Context Bar */}
-      <div className="bg-[#091118] border border-[#162736] rounded-xl p-5 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="bg-[#183144] text-[#d6f36b] text-[11px] font-bold px-2.5 py-0.5 rounded border border-[#274862] tracking-wide">
-                ✦ AUTONOMOUS REVENUE RECOVERY DEMO
-              </span>
-              <span className="bg-[#064e3b] text-[#34d399] text-[11px] font-semibold px-2 py-0.5 rounded flex items-center gap-1.5 border border-[#065f46]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#34d399] animate-pulse"></span>
-                LIVE SUPABASE SYNC
-              </span>
-              <span className="bg-[#111f2d] text-[#93c5fd] text-[11px] font-medium px-2 py-0.5 rounded border border-[#1e3448]">
-                GEMINI 3.7 FLASH REASONING
-              </span>
-            </div>
-            <h1 className="text-xl lg:text-2xl font-bold text-white tracking-tight">
-              Interactive 9-Scenario Recovery Command Center
-            </h1>
-            <p className="text-xs lg:text-sm text-[#94a3b8] max-w-4xl leading-relaxed">
-              Explore 9 critical payment and billing disruption patterns. Recoverly blends real-time Supabase customer telemetry with autonomous Gemini AI diagnosis, optimal timing calculations, and multi-channel customer communications.
-            </p>
+    <div className="page" id="recovery-demo-page">
+      {/* Page Header */}
+      <div className="page-heading" id="demo-page-heading">
+        <div>
+          <div className="eyebrow">Autonomous Revenue Ops • Sandbox Studio</div>
+          <h1>Dynamic Revenue Incident Sandbox</h1>
+          <p>
+            Create, persist, and resolve dynamic sandbox revenue incidents across 9 payment disruption rails.
+            Grounded in real Supabase customer telemetry, analyzed by Gemini AI, and safely simulated with 0 production database mutations.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <div className="sandbox-tag-pill" id="sandbox-isolation-badge">
+            <span style={{ fontSize: "12px" }}>🔒</span>
+            <span>SANDBOX ISOLATION ACTIVE • NO PROD IMPACT</span>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="bg-[#050c12] border border-[#172b3c] px-3 py-2 rounded-lg text-right">
-              <div className="text-[10px] text-[#64748b] font-semibold uppercase tracking-wider">Safety Guarantee</div>
-              <div className="text-xs font-bold text-[#86efac] flex items-center gap-1 justify-end">
-                <span>🛡 Sandbox Read-Only</span>
-              </div>
+          <button
+            className="outline-button"
+            id="toggle-incidents-list-btn"
+            onClick={() => setShowIncidentsDrawer(!showIncidentsDrawer)}
+            style={{ background: "#ffffff", borderColor: "#cbd5e1", fontSize: "12.5px" }}
+          >
+            📋 Incidents List ({sandboxIncidentsList.length})
+          </button>
+
+          {activeIncident ? (
+            <button
+              className="action-button"
+              id="new-incident-top-btn"
+              onClick={handleResetToNewIncident}
+              style={{ fontSize: "12.5px" }}
+            >
+              + Create New Incident
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Persisted Incidents List Drawer / Bar */}
+      {showIncidentsDrawer && (
+        <div
+          className="panel"
+          style={{ padding: "18px 22px", background: "#f8fafc", borderColor: "#cbd5e1", marginBottom: "20px" }}
+          id="persisted-incidents-drawer"
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <div>
+              <h3 style={{ fontSize: "14px", margin: 0, fontWeight: 800, color: "#172a34" }}>
+                Active Sandbox Incidents Store ({sandboxIncidentsList.length})
+              </h3>
+              <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
+                Persisted in sandbox storage across page navigation and tabs.
+              </p>
             </div>
             <button
-              onClick={() => runAnalysis(selectedKey, customInstruction)}
-              disabled={loadingAnalysis}
-              className="bg-[#d6f36b] hover:bg-[#c6e855] text-[#081016] text-xs font-bold px-4 py-2.5 rounded-lg transition-colors shadow flex items-center gap-2 whitespace-nowrap cursor-pointer disabled:opacity-60"
+              className="preset-chip-btn"
+              onClick={() => setShowIncidentsDrawer(false)}
+              style={{ fontSize: "11px" }}
             >
-              {loadingAnalysis ? (
-                <>
-                  <span className="w-3.5 h-3.5 border-2 border-[#081016] border-t-transparent rounded-full animate-spin"></span>
-                  <span>Synthesizing Intelligence...</span>
-                </>
-              ) : (
-                <>
-                  <span>✦</span>
-                  <span>Re-evaluate with Gemini</span>
-                </>
-              )}
+              ✕ Close List
             </button>
           </div>
-        </div>
-      </div>
 
-      {/* 9 Scenarios Selection Shelf */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              1. Choose a Revenue-Recovery Scenario
-            </span>
-            <span className="text-xs text-[#64748b]">({scenarios.length} Scenarios Ready)</span>
-          </div>
-
-          {/* Category Filter Chips */}
-          <div className="flex flex-wrap gap-1.5">
-            {categories.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => setCategoryFilter(cat.id)}
-                className={`text-[11px] font-medium px-2.5 py-1 rounded-md transition-colors whitespace-nowrap ${
-                  categoryFilter === cat.id
-                    ? "bg-[#d6f36b] text-[#081016] font-bold shadow-sm"
-                    : "bg-[#0c1620] text-[#94a3b8] hover:text-white border border-[#162736]"
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {loadingScenarios ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {[...Array(9)].map((_, i) => (
-              <div key={i} className="h-28 bg-[#091118] border border-[#162736] rounded-xl animate-pulse" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {filteredScenarios.map((sc) => {
-              const isSelected = sc.key === selectedKey;
-              return (
-                <button
-                  key={sc.key}
-                  onClick={() => setSelectedKey(sc.key)}
-                  className={`text-left p-3.5 rounded-xl border transition-all relative flex flex-col justify-between cursor-pointer ${
-                    isSelected
-                      ? "bg-[#102434] border-[#d6f36b] ring-1 ring-[#d6f36b]/40 shadow-sm"
-                      : "bg-[#091118] border-[#162736] hover:border-[#274862] hover:bg-[#0c1722]"
-                  }`}
-                >
-                  {isSelected && (
-                    <div className="absolute top-0 right-0 w-2.5 h-2.5 bg-[#d6f36b] rounded-bl-md"></div>
-                  )}
-
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                        sc.severity === "CRITICAL"
-                          ? "bg-[#450a0a] text-[#f87171] border border-[#7f1d1d]"
-                          : sc.severity === "HIGH"
-                          ? "bg-[#451a03] text-[#fbbf24] border border-[#78350f]"
-                          : "bg-[#172554] text-[#93c5fd] border border-[#1e3a8a]"
-                      }`}>
-                        {sc.tag}
+          {sandboxIncidentsList.length === 0 ? (
+            <div style={{ padding: "16px", textAlign: "center", color: "#64748b", fontSize: "12px" }}>
+              No sandbox incidents created yet. Use the form below to create your first dynamic incident!
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                gap: "10px",
+                maxHeight: "220px",
+                overflowY: "auto",
+              }}
+            >
+              {sandboxIncidentsList.map((inc) => {
+                const isSelected = activeIncident?.incident.id === inc.incident.id;
+                return (
+                  <div
+                    key={inc.incident.id}
+                    onClick={() => handleSelectIncident(inc.incident.id)}
+                    style={{
+                      padding: "10px 14px",
+                      background: isSelected ? "#eff6ff" : "#ffffff",
+                      border: isSelected ? "2px solid #0284c7" : "1px solid #e2e8f0",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "4px",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: "11px", fontWeight: 700, color: "#0284c7" }}>
+                        {inc.incident.id}
                       </span>
-                      <span className="text-xs font-mono font-bold text-white">
-                        {sc.currency} {sc.amount.toLocaleString()}
-                      </span>
-                    </div>
-
-                    <div className="font-semibold text-sm text-white pt-0.5 line-clamp-1">
-                      {sc.name}
-                    </div>
-
-                    <p className="text-[11px] text-[#94a3b8] line-clamp-2 leading-relaxed">
-                      {sc.problemDetected}
-                    </p>
-                  </div>
-
-                  <div className="pt-3 mt-2 flex items-center justify-between border-t border-[#162736] text-[10px]">
-                    <span className="truncate max-w-[170px] text-[#94a3b8]">
-                      👤 {sc.customer?.name || sc.customerLookupEmail}
-                    </span>
-                    <span className={`font-semibold ${isSelected ? "text-[#d6f36b]" : "text-[#64748b]"}`}>
-                      {isSelected ? "Active Case ●" : "Inspect Case ➔"}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Main Analysis & Execution Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Problem Diagnosis & Live Supabase Context (5 Cols) */}
-        <div className="lg:col-span-5 space-y-5">
-          {/* Card: Problem Detected & Live Supabase Profile */}
-          <div className="bg-[#091118] border border-[#162736] rounded-xl p-5 space-y-4 shadow-sm">
-            <div className="flex items-center justify-between border-b border-[#162736] pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-[#f59e0b]">⚠</span>
-                <h2 className="font-bold text-xs text-white uppercase tracking-wider">
-                  Problem & Customer Context
-                </h2>
-              </div>
-              <span className="text-[10px] bg-[#122030] text-[#94a3b8] font-mono px-2 py-0.5 rounded border border-[#1a3148]">
-                {currentScenario?.failureCode || "PAYMENT_DECLINE"}
-              </span>
-            </div>
-
-            {/* Problem Box */}
-            <div className="bg-[#0c1824] border border-[#193248] rounded-lg p-3.5 space-y-2">
-              <div className="text-xs font-bold text-white flex items-center justify-between">
-                <span>{currentScenario?.name}</span>
-                <span className="text-[10px] text-[#d6f36b] font-mono font-normal">
-                  Rail: {currentScenario?.paymentMethod || "Direct Payment"}
-                </span>
-              </div>
-              <p className="text-xs text-[#cbd5e1] leading-relaxed">
-                {currentScenario?.problemDetected}
-              </p>
-              <div className="flex flex-wrap gap-2 pt-1">
-                <div className="text-[11px] bg-[#060e15] px-2.5 py-1 rounded text-[#94a3b8] border border-[#15293c]">
-                  Amount at risk: <strong className="text-white font-mono">{currency} {amountAtRisk.toLocaleString()}</strong>
-                </div>
-                <div className="text-[11px] bg-[#060e15] px-2.5 py-1 rounded text-[#94a3b8] border border-[#15293c]">
-                  Severity: <span className="text-[#fbbf24] font-semibold">{currentScenario?.severity || "HIGH"}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Real Supabase Customer Database Record */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs text-[#94a3b8] font-semibold">
-                <span className="flex items-center gap-1.5 text-white">
-                  <span>👤</span> Live Supabase Customer Profile
-                </span>
-                <span className="text-[10px] text-[#34d399] font-mono flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#34d399]"></span> Connected
-                </span>
-              </div>
-
-              <div className="bg-[#060d14] border border-[#152738] rounded-lg p-3.5 space-y-3 text-xs">
-                <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-[#152738]">
-                  <div>
-                    <div className="text-[10px] text-[#64748b] uppercase font-semibold">Customer Name</div>
-                    <div className="font-bold text-white text-xs mt-0.5">{customer?.name || "N/A"}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-[#64748b] uppercase font-semibold">Segment</div>
-                    <div className="text-[#93c5fd] font-medium text-xs mt-0.5">{customer?.customer_type || "INDIVIDUAL"}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <div className="text-[10px] text-[#64748b] uppercase font-semibold">Contact Email & Phone</div>
-                    <div className="text-[#cbd5e1] font-mono text-[11px] mt-0.5 truncate">
-                      {customer?.email || currentScenario?.customerLookupEmail} {customer?.phone ? `• ${customer.phone}` : ""}
-                    </div>
-                  </div>
-                </div>
-
-                {/* DB Telemetry Counters */}
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-[#0a1520] p-2 rounded border border-[#162a3c]">
-                    <div className="text-[10px] text-[#64748b] uppercase">Transactions</div>
-                    <div className="text-xs font-bold font-mono text-white mt-0.5">{context?.transactions?.length || 1}</div>
-                  </div>
-                  <div className="bg-[#0a1520] p-2 rounded border border-[#162a3c]">
-                    <div className="text-[10px] text-[#64748b] uppercase">Invoices</div>
-                    <div className="text-xs font-bold font-mono text-white mt-0.5">{context?.invoices?.length || 1}</div>
-                  </div>
-                  <div className="bg-[#0a1520] p-2 rounded border border-[#162a3c]">
-                    <div className="text-[10px] text-[#64748b] uppercase">Events</div>
-                    <div className="text-xs font-bold font-mono text-white mt-0.5">{context?.paymentEvents?.length || 2}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Root Cause Diagnosis */}
-            <div className="space-y-1.5">
-              <div className="text-xs font-semibold text-[#94a3b8] uppercase tracking-wider flex items-center gap-1.5">
-                <span>🔍</span> Root Cause Diagnosis
-              </div>
-              <div className="bg-[#09141e] border border-[#162c3e] p-3.5 rounded-lg text-xs text-[#e2e8f0] leading-relaxed">
-                {analysis?.rootCause || currentScenario?.baselineSummary}
-              </div>
-            </div>
-          </div>
-
-          {/* Card: Read-Only Simulation Sandbox */}
-          <div className="bg-[#091118] border border-[#162736] rounded-xl p-5 space-y-4 shadow-sm">
-            <div className="flex items-center justify-between border-b border-[#162736] pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm">🧪</span>
-                <h2 className="font-bold text-xs text-white uppercase tracking-wider">
-                  Simulation Sandbox (Safe / Read-Only)
-                </h2>
-              </div>
-              <span className="text-[10px] bg-[#064e3b] text-[#86efac] font-medium px-2 py-0.5 rounded border border-[#065f46]">
-                No DB Mutation
-              </span>
-            </div>
-
-            <p className="text-xs text-[#94a3b8] leading-relaxed">
-              Test executing the autonomous recovery strategy in a protected simulation environment without triggering real gateway debits or modifying database records:
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <button
-                onClick={() => handleRunSimulation("Smart Multi-Acquirer Retry")}
-                disabled={simulatingAction !== null}
-                className="bg-[#0c1824] hover:bg-[#132536] border border-[#1b344b] text-white text-xs font-semibold p-2.5 rounded-lg text-left transition-colors flex items-center justify-between cursor-pointer disabled:opacity-60"
-              >
-                <span>⚡ Test Smart Retry</span>
-                <span className="text-[#d6f36b]">➔</span>
-              </button>
-
-              <button
-                onClick={() => handleRunSimulation("WhatsApp 1-Click Intent")}
-                disabled={simulatingAction !== null}
-                className="bg-[#0c1824] hover:bg-[#132536] border border-[#1b344b] text-white text-xs font-semibold p-2.5 rounded-lg text-left transition-colors flex items-center justify-between cursor-pointer disabled:opacity-60"
-              >
-                <span>💬 Test WhatsApp Dispatch</span>
-                <span className="text-[#34d399]">➔</span>
-              </button>
-
-              <button
-                onClick={() => handleRunSimulation("Tokenized Card Update Link")}
-                disabled={simulatingAction !== null}
-                className="bg-[#0c1824] hover:bg-[#132536] border border-[#1b344b] text-white text-xs font-semibold p-2.5 rounded-lg text-left transition-colors flex items-center justify-between cursor-pointer disabled:opacity-60"
-              >
-                <span>💳 Test Card Update Flow</span>
-                <span className="text-[#93c5fd]">➔</span>
-              </button>
-
-              <button
-                onClick={() => handleRunSimulation("B2B Promise-to-Pay Lock")}
-                disabled={simulatingAction !== null}
-                className="bg-[#0c1824] hover:bg-[#132536] border border-[#1b344b] text-white text-xs font-semibold p-2.5 rounded-lg text-left transition-colors flex items-center justify-between cursor-pointer disabled:opacity-60"
-              >
-                <span>🤝 Test Promise-to-Pay</span>
-                <span className="text-[#f59e0b]">➔</span>
-              </button>
-            </div>
-
-            {/* Simulation Feedback Output */}
-            {simulatingAction && (
-              <div className="bg-[#050c12] border border-[#1d3b52] p-3 rounded-lg flex items-center gap-3 text-xs text-[#d6f36b] animate-pulse">
-                <span className="w-3.5 h-3.5 border-2 border-[#d6f36b] border-t-transparent rounded-full animate-spin"></span>
-                <span>Simulating {simulatingAction} through recovery orchestration engine...</span>
-              </div>
-            )}
-
-            {simulationLog && (
-              <div className="bg-[#050c12] border border-[#19354a] p-3.5 rounded-lg space-y-1.5 font-mono text-[11px]">
-                <div className="flex items-center justify-between text-[#86efac]">
-                  <span className="font-bold">✔ {simulationLog.status}</span>
-                  <span className="text-[#64748b] text-[10px]">{simulationLog.timestamp}</span>
-                </div>
-                <div className="text-[#cbd5e1]">{simulationLog.message}</div>
-                <div className="text-[10px] text-[#64748b]">{simulationLog.telemetry}</div>
-                <div className="text-[#d6f36b] font-bold pt-1.5 border-t border-[#142938]">
-                  {simulationLog.projectedLift}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Column: AI Intelligence, Strategy & Communications (7 Cols) */}
-        <div className="lg:col-span-7 space-y-5">
-          {/* Card: AI Strategy Studio & Metrics */}
-          <div className="bg-[#091118] border border-[#162736] rounded-xl p-5 space-y-4 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-[#162736] pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-[#d6f36b]">✦</span>
-                <h2 className="font-bold text-xs text-white uppercase tracking-wider">
-                  AI Assessment & Recommended Action
-                </h2>
-              </div>
-              <span className="text-[10px] bg-[#111e2b] text-[#93c5fd] px-2 py-0.5 rounded font-mono border border-[#1b3146]">
-                Engine: Gemini 3.7 Flash
-              </span>
-            </div>
-
-            {loadingAnalysis ? (
-              <div className="py-12 text-center space-y-3">
-                <div className="w-8 h-8 border-2 border-[#d6f36b] border-t-transparent rounded-full animate-spin mx-auto"></div>
-                <div className="text-xs text-[#94a3b8]">
-                  Evaluating Supabase history, banking decline codes, and optimal dunning strategy...
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {/* AI Executive Assessment */}
-                <div className="bg-[#0b1722] border border-[#18344c] rounded-lg p-4 space-y-1.5">
-                  <div className="text-[11px] font-bold text-[#d6f36b] uppercase tracking-wider flex items-center gap-1.5">
-                    <span>✦</span> AI Executive Assessment
-                  </div>
-                  <p className="text-xs text-white leading-relaxed">
-                    {analysis?.aiAssessment || "AI analysis completed based on real account telemetry."}
-                  </p>
-                </div>
-
-                {/* Key Metrics Row: Probability, Recoverable Revenue, Timing */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Recovery Probability */}
-                  <div className="bg-[#060e15] border border-[#15293c] p-3.5 rounded-lg space-y-1.5">
-                    <div className="text-[10px] text-[#94a3b8] uppercase font-semibold">Recovery Probability</div>
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-2xl font-black text-white font-mono">{recoveryProbPct}%</span>
-                      <span className={`text-[10px] font-bold ${
-                        recoveryProbPct >= 80 ? "text-[#34d399]" : recoveryProbPct >= 60 ? "text-[#fbbf24]" : "text-[#f87171]"
-                      }`}>
-                        {recoveryProbPct >= 80 ? "HIGH" : recoveryProbPct >= 60 ? "MODERATE" : "HIGH CHURN RISK"}
-                      </span>
-                    </div>
-                    {/* Visual Gauge Bar */}
-                    <div className="w-full bg-[#11202e] h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          recoveryProbPct >= 80 ? "bg-[#34d399]" : recoveryProbPct >= 60 ? "bg-[#fbbf24]" : "bg-[#f87171]"
+                      <span
+                        className={`status-pill ${
+                          inc.incident.status === "ACTION_SIMULATED" || inc.incident.status === "RECOVERED"
+                            ? "success"
+                            : inc.incident.status === "ANALYZED"
+                            ? "info"
+                            : "warning"
                         }`}
-                        style={{ width: `${recoveryProbPct}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  {/* Expected Recoverable Revenue */}
-                  <div className="bg-[#060e15] border border-[#15293c] p-3.5 rounded-lg space-y-1.5">
-                    <div className="text-[10px] text-[#94a3b8] uppercase font-semibold">Expected Recoverable</div>
-                    <div className="text-2xl font-black text-[#d6f36b] font-mono">
-                      {currency} {expectedRev.toLocaleString()}
-                    </div>
-                    <div className="text-[10px] text-[#64748b] truncate">
-                      of {currency} {amountAtRisk.toLocaleString()} at risk
-                    </div>
-                  </div>
-
-                  {/* Recommended Timing */}
-                  <div className="bg-[#060e15] border border-[#15293c] p-3.5 rounded-lg space-y-1.5">
-                    <div className="text-[10px] text-[#94a3b8] uppercase font-semibold">Recommended Timing</div>
-                    <div className="text-xs font-bold text-white line-clamp-2 leading-tight">
-                      {analysis?.recommendedTiming || "Immediate execution window"}
-                    </div>
-                    <div className="text-[10px] text-[#38bdf8] flex items-center gap-1">
-                      <span>⚡</span> Bank Clearing Optimized
-                    </div>
-                  </div>
-                </div>
-
-                {/* Strategy & Reasoning Breakdown */}
-                <div className="space-y-3 bg-[#060e15] border border-[#15293c] p-4 rounded-lg">
-                  <div>
-                    <div className="text-[10px] text-[#94a3b8] uppercase font-semibold">Recommended Strategy</div>
-                    <div className="text-sm font-bold text-white mt-1 flex items-center gap-2">
-                      <span className="text-[#34d399]">✔</span>
-                      <span>{analysis?.recommendedStrategy || "Autonomous Multi-Channel Cascade"}</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2.5 border-t border-[#132332]">
-                    <div className="text-[10px] text-[#94a3b8] uppercase font-semibold">Mathematical & Behavioral Reasoning</div>
-                    <p className="text-xs text-[#cbd5e1] leading-relaxed mt-1">
-                      {analysis?.reasoning || "Aligns execution with card network settlement windows while minimizing friction for the customer."}
-                    </p>
-                  </div>
-
-                  {/* Key Operational Risk Factors */}
-                  {analysis?.keyRiskFactors && analysis.keyRiskFactors.length > 0 && (
-                    <div className="pt-2.5 border-t border-[#132332] space-y-1.5">
-                      <div className="text-[10px] text-[#94a3b8] uppercase font-semibold">Key Risk Mitigations</div>
-                      <div className="space-y-1">
-                        {analysis.keyRiskFactors.map((risk, idx) => (
-                          <div key={idx} className="flex items-start gap-2 text-xs text-[#94a3b8]">
-                            <span className="text-[#f87171] text-[10px] mt-0.5">●</span>
-                            <span className="text-[#cbd5e1]">{risk}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Live Custom Prompting Bar */}
-                <form onSubmit={handleCustomPromptSubmit} className="pt-1">
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="text"
-                      value={customInstruction}
-                      onChange={(e) => setCustomInstruction(e.target.value)}
-                      placeholder="Prompt Gemini Live (e.g. 'Prioritize friction-free WhatsApp UPI intent' or 'Offer 5% annual upgrade incentive')..."
-                      className="flex-1 bg-[#060e15] border border-[#172e42] text-white text-xs px-3.5 py-2.5 rounded-lg focus:outline-none focus:border-[#d6f36b] placeholder-[#475569]"
-                    />
-                    <button
-                      type="submit"
-                      disabled={loadingAnalysis}
-                      className="bg-[#122434] hover:bg-[#1a344a] text-white text-xs font-semibold px-4 py-2.5 rounded-lg transition-colors whitespace-nowrap border border-[#1e3b54] cursor-pointer disabled:opacity-60"
-                    >
-                      {loadingAnalysis ? "Evaluating..." : "Apply AI Directive"}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-          </div>
-
-          {/* Card: Suggested Customer Message (WhatsApp / SMS / Email) */}
-          <div className="bg-[#091118] border border-[#162736] rounded-xl p-5 space-y-4 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-[#162736] pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm">💬</span>
-                <h2 className="font-bold text-xs text-white uppercase tracking-wider">
-                  Suggested Customer Message (WhatsApp / SMS / Email)
-                </h2>
-              </div>
-
-              {/* Channel Tabs */}
-              <div className="flex bg-[#060d14] p-1 rounded-lg border border-[#142636]">
-                <button
-                  onClick={() => setSelectedChannel("whatsapp")}
-                  className={`text-xs px-3 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
-                    selectedChannel === "whatsapp"
-                      ? "bg-[#25D366] text-black shadow-sm"
-                      : "text-[#94a3b8] hover:text-white"
-                  }`}
-                >
-                  WhatsApp
-                </button>
-                <button
-                  onClick={() => setSelectedChannel("sms")}
-                  className={`text-xs px-3 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
-                    selectedChannel === "sms"
-                      ? "bg-[#38bdf8] text-black shadow-sm"
-                      : "text-[#94a3b8] hover:text-white"
-                  }`}
-                >
-                  SMS
-                </button>
-                <button
-                  onClick={() => setSelectedChannel("email")}
-                  className={`text-xs px-3 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
-                    selectedChannel === "email"
-                      ? "bg-[#c084fc] text-black shadow-sm"
-                      : "text-[#94a3b8] hover:text-white"
-                  }`}
-                >
-                  Email
-                </button>
-              </div>
-            </div>
-
-            {/* Realistic Message Previews */}
-            <div className="space-y-3">
-              {/* WhatsApp Tab */}
-              {selectedChannel === "whatsapp" && (
-                <div className="bg-[#05130d] border border-[#0b3322] rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between border-b border-[#0b3322] pb-2 text-xs">
-                    <div className="flex items-center gap-2 text-[#34d399] font-bold">
-                      <span className="w-2 h-2 rounded-full bg-[#25D366]"></span>
-                      WhatsApp Official Business Account (Verified)
-                    </div>
-                    <button
-                      onClick={() => handleCopyMessage(analysis?.messages?.whatsapp || "", "whatsapp")}
-                      className="text-[11px] bg-[#0c3826] hover:bg-[#134e36] text-[#86efac] font-semibold px-2.5 py-1 rounded transition-colors cursor-pointer"
-                    >
-                      {copiedChannel === "whatsapp" ? "✔ Copied to Clipboard" : "📋 Copy WhatsApp Text"}
-                    </button>
-                  </div>
-
-                  {/* Authentic WhatsApp Bubble */}
-                  <div className="max-w-md bg-[#005c4b] text-white p-3.5 rounded-xl rounded-tl-none space-y-2 text-xs shadow-md border border-[#02735e]">
-                    <p className="whitespace-pre-wrap leading-relaxed">
-                      {analysis?.messages?.whatsapp || `Hi ${customer?.name || "Customer"} 👋 Your payment of ${currency} ${amountAtRisk.toLocaleString()} was interrupted. Tap here to complete it instantly: https://pay.recoverly.test/i/${(currentScenario?.key || "recovery").slice(0, 6)}`}
-                    </p>
-                    <div className="text-[10px] text-[#a7f3d0] text-right flex items-center justify-end gap-1">
-                      <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      <span className="text-[#38bdf8]">✓✓</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* SMS Tab */}
-              {selectedChannel === "sms" && (
-                <div className="bg-[#060e15] border border-[#152a3c] rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between border-b border-[#152a3c] pb-2 text-xs">
-                    <div className="text-[#38bdf8] font-bold flex items-center gap-2">
-                      <span>📱</span> Telecom DLT Verified SMS (160 Chars)
-                    </div>
-                    <button
-                      onClick={() => handleCopyMessage(analysis?.messages?.sms || "", "sms")}
-                      className="text-[11px] bg-[#12283a] hover:bg-[#1a3852] text-[#93c5fd] font-semibold px-2.5 py-1 rounded transition-colors cursor-pointer"
-                    >
-                      {copiedChannel === "sms" ? "✔ Copied to Clipboard" : "📋 Copy SMS Text"}
-                    </button>
-                  </div>
-
-                  {/* SMS Bubble */}
-                  <div className="max-w-sm bg-[#162738] text-white p-3.5 rounded-2xl rounded-bl-none text-xs leading-relaxed border border-[#233f5a]">
-                    {analysis?.messages?.sms || `Recoverly Alert: Hi ${customer?.name || "Customer"}, your payment of ${currency} ${amountAtRisk.toLocaleString()} is pending. Settle in 1 tap: https://pay.recoverly.test/s/${(currentScenario?.key || "recovery").slice(0, 6)}`}
-                  </div>
-                </div>
-              )}
-
-              {/* Email Tab */}
-              {selectedChannel === "email" && (
-                <div className="bg-[#060e15] border border-[#152a3c] rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between border-b border-[#152a3c] pb-2 text-xs">
-                    <div className="text-[#c084fc] font-bold flex items-center gap-2">
-                      <span>✉</span> Branded Finance & Recovery Email
-                    </div>
-                    <button
-                      onClick={() =>
-                        handleCopyMessage(
-                          `Subject: ${analysis?.messages?.email?.subject}\n\n${analysis?.messages?.email?.body}`,
-                          "email"
-                        )
-                      }
-                      className="text-[11px] bg-[#2d114d] hover:bg-[#3d1866] text-[#d8b4fe] font-semibold px-2.5 py-1 rounded transition-colors cursor-pointer"
-                    >
-                      {copiedChannel === "email" ? "✔ Copied to Clipboard" : "📋 Copy Full Email"}
-                    </button>
-                  </div>
-
-                  <div className="bg-[#091420] border border-[#162c3e] rounded-lg p-4 space-y-3 text-xs">
-                    <div className="text-[#94a3b8] text-[11px] border-b border-[#162c3e] pb-2">
-                      <span className="font-semibold text-white">Subject: </span>
-                      <span className="text-[#cbd5e1]">{analysis?.messages?.email?.subject || `Action Required: Payment for ${customer?.name || "your account"}`}</span>
-                    </div>
-
-                    <div className="text-[#cbd5e1] whitespace-pre-wrap leading-relaxed text-xs">
-                      {analysis?.messages?.email?.body || `Dear ${customer?.name || "Valued Customer"},\n\nWe noticed your recent payment could not be processed. Please use the secure link below to complete your transaction.\n\nBest regards,\nRecoverly Revenue Operations Team`}
-                    </div>
-
-                    <div className="pt-2">
-                      <button
-                        onClick={() => handleRunSimulation("Email Settle CTA Link")}
-                        className="bg-[#d6f36b] text-[#081016] text-xs font-bold px-4 py-2 rounded-md hover:bg-[#c4e555] transition-colors cursor-pointer"
+                        style={{ fontSize: "9.5px", padding: "1px 6px" }}
                       >
-                        Complete Payment ({currency} {amountAtRisk.toLocaleString()})
+                        {inc.incident.status}
+                      </span>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: "12px", color: "#1e293b" }}>
+                      {inc.customer.name} • ₹{inc.incident.amount.toLocaleString()} {inc.incident.currency}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "#64748b" }}>
+                      <span>{inc.incident.scenarioTypeName}</span>
+                      <button
+                        onClick={(e) => handleDeleteIncident(e, inc.incident.id)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#ef4444",
+                          cursor: "pointer",
+                          fontSize: "11px",
+                          padding: "2px 4px",
+                        }}
+                        title="Delete Incident"
+                      >
+                        🗑
                       </button>
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {loadingInitial ? (
+        <div className="loading-container" id="sandbox-initial-loading">
+          <div className="spinner"></div>
+          <span>Initializing dynamic sandbox engine and grounding Supabase customer context...</span>
+        </div>
+      ) : !activeIncident ? (
+        /* ========================================================================= */
+        /* STATE A: CREATE REVENUE INCIDENT FORM                                     */
+        /* ========================================================================= */
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }} id="incident-creation-workspace">
+          {/* Step 1: Select Scenario Type (9 Types) */}
+          <div className="panel" style={{ padding: "20px 24px" }} id="scenario-type-selection-panel">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+              <div>
+                <h2 style={{ fontSize: "15px", margin: 0, color: "#172a34", fontWeight: 800 }}>
+                  1. Choose Revenue Disruption Scenario Type (9 Rails)
+                </h2>
+                <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
+                  Select the failure archetype. Smart parameters will auto-fill below for instant customization or launch.
+                </p>
+              </div>
+              <span className="status-pill info">9 Supported Types</span>
+            </div>
+
+            <div className="sandbox-type-grid" id="scenario-types-grid">
+              {scenarioTypes.map((type) => {
+                const isSelected = type.key === selectedTypeKey;
+                return (
+                  <div
+                    key={type.key}
+                    id={`type-card-${type.key}`}
+                    className={`sandbox-type-card ${isSelected ? "selected" : ""}`}
+                    onClick={() => handleScenarioTypeSelect(type.key)}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
+                      <span className={`status-pill ${type.defaultSeverity === "CRITICAL" ? "danger" : type.defaultSeverity === "HIGH" ? "warning" : "info"}`}>
+                        {type.defaultSeverity}
+                      </span>
+                      <span className="status-pill purple" style={{ fontSize: "9px" }}>{type.category}</span>
+                    </div>
+                    <div style={{ fontWeight: 800, fontSize: "13px", color: "#172a34", marginBottom: "4px" }}>
+                      {type.name}
+                    </div>
+                    <p style={{ fontSize: "11px", color: "#64748b", margin: "0 0 10px", lineHeight: "15px" }}>
+                      {type.description}
+                    </p>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f1f5f9", paddingTop: "8px", fontSize: "10.5px" }}>
+                      <span style={{ color: "#0284c7", fontWeight: 600 }}>{type.defaultChannel}</span>
+                      <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color: "#475569" }}>
+                        ₹{type.suggestedAmount.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          {/* Step 2 & 3: Customer Context & Incident Parameters */}
+          <form onSubmit={handleCreateIncident} id="incident-parameters-form">
+            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.3fr", gap: "20px" }}>
+              {/* Left Column: Customer Grounding */}
+              <div className="panel" style={{ padding: "20px 24px" }} id="customer-grounding-panel">
+                <div style={{ marginBottom: "16px" }}>
+                  <h2 style={{ fontSize: "15px", margin: 0, color: "#172a34", fontWeight: 800 }}>
+                    2. Select Customer (Supabase Ground Truth)
+                  </h2>
+                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
+                    Gemini AI will fetch this customer's actual historical invoices, subscriptions, and transaction ledger.
+                  </p>
+                </div>
+
+                <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
+                  <button
+                    type="button"
+                    className={`preset-chip-btn ${!isCustomCustomer ? "active" : ""}`}
+                    onClick={() => setIsCustomCustomer(false)}
+                    id="select-existing-customer-btn"
+                  >
+                    Select Supabase Account
+                  </button>
+                  <button
+                    type="button"
+                    className={`preset-chip-btn ${isCustomCustomer ? "active" : ""}`}
+                    onClick={() => setIsCustomCustomer(true)}
+                    id="enter-custom-customer-btn"
+                  >
+                    + Custom Customer Input
+                  </button>
+                </div>
+
+                {!isCustomCustomer ? (
+                  <div>
+                    <label className="field-label" htmlFor="customer-select">
+                      Customer Profile:
+                    </label>
+                    <select
+                      id="customer-select"
+                      className="text-input"
+                      value={selectedCustomerId}
+                      onChange={(e) => setSelectedCustomerId(e.target.value)}
+                      style={{ marginBottom: "16px" }}
+                    >
+                      {supabaseCustomers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({c.email}) — {c.customer_type || "INDIVIDUAL"}
+                        </option>
+                      ))}
+                    </select>
+
+                    {selectedCustomerObj && (
+                      <div
+                        style={{
+                          background: "#f8fafc",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "8px",
+                          padding: "14px",
+                          fontSize: "12px",
+                        }}
+                        id="selected-customer-preview-box"
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                          <strong style={{ color: "#1e293b" }}>{selectedCustomerObj.name}</strong>
+                          <span className="status-pill neutral">{selectedCustomerObj.customer_type || "INDIVIDUAL"}</span>
+                        </div>
+                        <div style={{ color: "#64748b", fontSize: "11.5px", marginBottom: "4px" }}>
+                          Email: {selectedCustomerObj.email}
+                        </div>
+                        <div style={{ color: "#64748b", fontSize: "11.5px" }}>
+                          Supabase ID: <span style={{ fontFamily: "'DM Mono', monospace" }}>{selectedCustomerObj.id}</span>
+                        </div>
+                        <div
+                          style={{
+                            marginTop: "10px",
+                            paddingTop: "8px",
+                            borderTop: "1px dashed #cbd5e1",
+                            fontSize: "11px",
+                            color: "#0284c7",
+                            fontWeight: 600,
+                          }}
+                        >
+                          ✓ Connected to live Supabase ledger & payment telemetry
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <div>
+                      <label className="field-label" htmlFor="custom-customer-name">
+                        Customer Full Name:
+                      </label>
+                      <input
+                        id="custom-customer-name"
+                        type="text"
+                        className="text-input"
+                        placeholder="e.g. Priya Sharma"
+                        value={customName}
+                        onChange={(e) => setCustomName(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="field-label" htmlFor="custom-customer-email">
+                        Customer Email Address:
+                      </label>
+                      <input
+                        id="custom-customer-email"
+                        type="email"
+                        className="text-input"
+                        placeholder="e.g. priya.sharma@example.test"
+                        value={customEmail}
+                        onChange={(e) => setCustomEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="field-label" htmlFor="custom-customer-type">
+                        Account Tier:
+                      </label>
+                      <select
+                        id="custom-customer-type"
+                        className="text-input"
+                        value={customType}
+                        onChange={(e) => setCustomType(e.target.value)}
+                      >
+                        <option value="INDIVIDUAL">INDIVIDUAL (B2C)</option>
+                        <option value="BUSINESS">BUSINESS (SMB)</option>
+                        <option value="ENTERPRISE">ENTERPRISE (B2B)</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Financial & Technical Parameters */}
+              <div className="panel" style={{ padding: "20px 24px" }} id="incident-parameters-panel">
+                <div style={{ marginBottom: "16px" }}>
+                  <h2 style={{ fontSize: "15px", margin: 0, color: "#172a34", fontWeight: 800 }}>
+                    3. Incident Parameters & Disruption Rail
+                  </h2>
+                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
+                    Tune the amount at risk, payment method, failure code, and situational notes.
+                  </p>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                  {/* Amount at Risk & Currency */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "12px" }}>
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <label className="field-label" htmlFor="incident-amount" style={{ margin: 0 }}>
+                          Amount at Risk:
+                        </label>
+                        <div style={{ display: "flex", gap: "4px" }}>
+                          {amountPresets.slice(0, 3).map((p) => (
+                            <button
+                              key={p}
+                              type="button"
+                              className={`preset-chip-btn ${amount === p ? "active" : ""}`}
+                              onClick={() => setAmount(p)}
+                              style={{ padding: "1px 5px", fontSize: "9.5px" }}
+                            >
+                              ₹{p}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <input
+                        id="incident-amount"
+                        type="number"
+                        className="text-input"
+                        value={amount}
+                        onChange={(e) => setAmount(Number(e.target.value))}
+                        min="10"
+                        step="1"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label" htmlFor="incident-currency">
+                        Currency:
+                      </label>
+                      <select
+                        id="incident-currency"
+                        className="text-input"
+                        value={currency}
+                        onChange={(e) => setCurrency(e.target.value)}
+                      >
+                        <option value="INR">INR (₹)</option>
+                        <option value="USD">USD ($)</option>
+                        <option value="EUR">EUR (€)</option>
+                        <option value="GBP">GBP (£)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Payment Method & Severity */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "12px" }}>
+                    <div>
+                      <label className="field-label" htmlFor="incident-payment-method">
+                        Payment Method / Rail:
+                      </label>
+                      <input
+                        id="incident-payment-method"
+                        type="text"
+                        className="text-input"
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="field-label" htmlFor="incident-severity">
+                        Severity:
+                      </label>
+                      <select
+                        id="incident-severity"
+                        className="text-input"
+                        value={severity}
+                        onChange={(e) => setSeverity(e.target.value as any)}
+                      >
+                        <option value="LOW">LOW</option>
+                        <option value="MEDIUM">MEDIUM</option>
+                        <option value="HIGH">HIGH</option>
+                        <option value="CRITICAL">CRITICAL</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Failure Code */}
+                  <div>
+                    <label className="field-label" htmlFor="incident-failure-code">
+                      Gateway Disruption / Decline Code:
+                    </label>
+                    <input
+                      id="incident-failure-code"
+                      type="text"
+                      className="text-input"
+                      style={{ fontFamily: "'DM Mono', monospace", fontSize: "12px" }}
+                      value={failureCode}
+                      onChange={(e) => setFailureCode(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  {/* Billing Context */}
+                  <div>
+                    <label className="field-label" htmlFor="incident-billing-context">
+                      Operational & Billing Context:
+                    </label>
+                    <textarea
+                      id="incident-billing-context"
+                      className="text-input"
+                      rows={2}
+                      value={billingContext}
+                      onChange={(e) => setBillingContext(e.target.value)}
+                      placeholder="Describe the failure context..."
+                      required
+                    />
+                  </div>
+
+                  {/* Operator AI Directive */}
+                  <div>
+                    <label className="field-label" htmlFor="incident-operator-prompt">
+                      Operator Directive for Gemini AI (Optional):
+                    </label>
+                    <input
+                      id="incident-operator-prompt"
+                      type="text"
+                      className="text-input"
+                      placeholder="e.g. Recommend an instant WhatsApp UPI intent fallback with polite urgency..."
+                      value={customInstruction}
+                      onChange={(e) => setCustomInstruction(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Launch Action Bar */}
+            <div
+              style={{
+                marginTop: "20px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                borderRadius: "10px",
+                padding: "16px 24px",
+              }}
+              id="create-incident-action-bar"
+            >
+              <div>
+                <div style={{ fontWeight: 800, fontSize: "14px", color: "#172a34" }}>
+                  Ready to Ingest Sandbox Incident
+                </div>
+                <div style={{ fontSize: "12px", color: "#64748b" }}>
+                  Generates unique ID • Bounded Agent Lifecycle • Real Supabase Grounding • Read-Only
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="action-button"
+                id="submit-create-incident-btn"
+                disabled={analyzingIncident}
+                style={{ minWidth: "260px", padding: "12px 24px", fontSize: "13px" }}
+              >
+                {analyzingIncident ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                    <span className="spinner" style={{ width: "14px", height: "14px" }}></span>
+                    Synthesizing with Gemini AI...
+                  </span>
+                ) : (
+                  "✦ Create Incident & Run Autonomous Agent"
+                )}
+              </button>
+            </div>
+          </form>
+
+          {incidentError && (
+            <div className="error-banner" id="incident-creation-error">
+              <strong>Notice:</strong> {incidentError}
+            </div>
+          )}
         </div>
-      </div>
+      ) : (
+        /* ========================================================================= */
+        /* STATE B: LIVE INCIDENT WORKSPACE & BOUNDED AGENT EXECUTION HUB           */
+        /* ========================================================================= */
+        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }} id="active-incident-workspace">
+          {/* Prominent Sandbox Isolation Banner */}
+          <div className="sandbox-hero-banner" id="sandbox-active-banner">
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", flexWrap: "wrap" }}>
+                <span className="sandbox-tag-pill">{activeIncident.incident.label}</span>
+                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: "11px", color: "#94a3b8" }}>
+                  ID: {activeIncident.incident.id}
+                </span>
+                <span className={`status-pill ${activeIncident.incident.severity === "CRITICAL" ? "danger" : "warning"}`}>
+                  {activeIncident.incident.severity} SEVERITY
+                </span>
+                <span
+                  className={`status-pill ${
+                    activeIncident.incident.status === "ACTION_SIMULATED" || activeIncident.incident.status === "RECOVERED"
+                      ? "success"
+                      : "info"
+                  }`}
+                >
+                  STATUS: {activeIncident.incident.status}
+                </span>
+              </div>
+              <h2 style={{ fontSize: "18px", margin: "2px 0 4px", color: "#ffffff", fontWeight: 800 }}>
+                {activeIncident.incident.scenarioTypeName} • {activeIncident.customer.name}
+              </h2>
+              <p style={{ fontSize: "12px", color: "#cbd5e1", margin: 0 }}>
+                Rail: <strong style={{ color: "#ffffff" }}>{activeIncident.incident.paymentMethod}</strong> • Decline:{" "}
+                <code style={{ color: "#fca5a5" }}>{activeIncident.incident.failureCode}</code> • Amount:{" "}
+                <strong style={{ color: "#d6f36b" }}>₹{activeIncident.incident.amount.toLocaleString()} {activeIncident.incident.currency}</strong>
+              </p>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                className="outline-button"
+                id="reset-incident-top-btn"
+                onClick={handleResetToNewIncident}
+                style={{ color: "#ffffff", borderColor: "#475569", background: "rgba(255,255,255,0.06)", fontSize: "12px" }}
+              >
+                + New Incident
+              </button>
+              <button
+                className="action-button"
+                id="simulate-recovery-action-btn"
+                onClick={() =>
+                  handleExecuteAction(
+                    activeIncident.analysis.recommendedAction || "SMART_RETRY",
+                    activeIncident.analysis.selectedStrategy
+                  )
+                }
+                disabled={executingAction !== null}
+                style={{
+                  background: simulationResult ? "#059669" : "#0284c7",
+                  borderColor: simulationResult ? "#059669" : "#0284c7",
+                  color: "#ffffff",
+                  fontSize: "12px",
+                }}
+              >
+                {executingAction ? (
+                  <span>⚡ Dispatching Acquirer Simulation...</span>
+                ) : simulationResult ? (
+                  "✓ Simulation Dispatched (Re-run)"
+                ) : (
+                  "⚡ Run Sandbox Recovery Simulation"
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* 6-Stage Bounded Agent Lifecycle Stepper */}
+          <div className="panel" style={{ padding: "18px 20px" }} id="agent-lifecycle-stepper-panel">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <h3 style={{ fontSize: "13px", margin: 0, fontWeight: 800, color: "#1e293b" }}>
+                Bounded Agent Execution Loop (6-Stage Pipeline)
+              </h3>
+              <span className="api-status ready">
+                <i></i>
+                <span>SANDBOX RUNTIME ACTIVE</span>
+              </span>
+            </div>
+
+            <div className="agent-stepper" id="six-stage-stepper">
+              {activeIncident.lifecycle.map((stepItem, idx) => {
+                const isDone = stepItem.status === "COMPLETED";
+                const isActive = stepItem.status === "ACTIVE";
+                return (
+                  <div
+                    key={stepItem.step}
+                    id={`lifecycle-step-${stepItem.step.toLowerCase()}`}
+                    className={`stepper-step ${isDone ? "completed" : isActive ? "active" : "pending"}`}
+                  >
+                    <div className="stepper-step-header">
+                      <div className="stepper-circle">
+                        {isDone ? "✓" : idx + 1}
+                      </div>
+                      <span className="stepper-name">{stepItem.step}</span>
+                    </div>
+                    <div className="stepper-title">{stepItem.title}</div>
+                    <div className="stepper-desc">{stepItem.detail}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Workspace Tabs Bar */}
+          <div className="panel" id="incident-workspace-panel">
+            <div className="demo-tabs-bar" id="workspace-tabs-bar">
+              <button
+                className={`demo-tab-item ${activeTab === "INTELLIGENCE" ? "active" : ""}`}
+                onClick={() => setActiveTab("INTELLIGENCE")}
+                id="tab-intelligence-btn"
+              >
+                <span>🧠</span>
+                <span>AI Recovery Intelligence & Evidence</span>
+              </button>
+
+              <button
+                className={`demo-tab-item ${activeTab === "MESSAGES" ? "active" : ""}`}
+                onClick={() => setActiveTab("MESSAGES")}
+                id="tab-messages-btn"
+              >
+                <span>💬</span>
+                <span>Multi-Channel Communication Previews</span>
+              </button>
+
+              <button
+                className={`demo-tab-item ${activeTab === "SUPABASE_CONTEXT" ? "active" : ""}`}
+                onClick={() => setActiveTab("SUPABASE_CONTEXT")}
+                id="tab-supabase-context-btn"
+              >
+                <span>🗄️</span>
+                <span>Supabase Ground Truth Telemetry ({activeIncident.context.transactionsCount} Txns)</span>
+              </button>
+
+              <button
+                className={`demo-tab-item ${activeTab === "AUDIT_TRAIL" ? "active" : ""}`}
+                onClick={() => setActiveTab("AUDIT_TRAIL")}
+                id="tab-audit-trail-btn"
+              >
+                <span>📜</span>
+                <span>Sandbox Audit Ledger ({activeIncident.lifecycle.length} Events)</span>
+              </button>
+            </div>
+
+            {/* TAB 1: AI RECOVERY INTELLIGENCE */}
+            {activeTab === "INTELLIGENCE" && (
+              <div style={{ padding: "20px 24px" }} id="tab-content-intelligence">
+                {/* AI Unavailable State or Live Analysis Banner */}
+                {(activeIncident.analysis as any).unavailable || (activeIncident.analysis as any).aiError ? (
+                  <div
+                    style={{
+                      background: "#fffbeb",
+                      border: "1px solid #fde68a",
+                      borderRadius: "8px",
+                      padding: "16px",
+                      marginBottom: "20px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px",
+                    }}
+                    id="ai-unavailable-alert"
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#92400e", fontWeight: 700, fontSize: "13px" }}>
+                      <span>⚠️</span>
+                      <span>Gemini AI Engine Offline / Key Required</span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#78350f" }}>
+                      {(activeIncident.analysis as any).aiError ||
+                        "GEMINI_API_KEY environment variable is not configured. Configure GEMINI_API_KEY in environment/settings to enable live AI reasoning."}
+                    </p>
+                    <div style={{ display: "flex", gap: "10px", alignItems: "center", marginTop: "4px" }}>
+                      <input
+                        type="text"
+                        className="text-input"
+                        placeholder="Optional: Enter custom directive and retry..."
+                        value={reanalysisPrompt}
+                        onChange={(e) => setReanalysisPrompt(e.target.value)}
+                        style={{ maxWidth: "400px", fontSize: "12px", padding: "6px 10px" }}
+                      />
+                      <button
+                        className="action-button"
+                        onClick={handleReanalyzeWithAI}
+                        disabled={reanalyzing}
+                        style={{ fontSize: "12px", padding: "6px 14px" }}
+                      >
+                        {reanalyzing ? "Synthesizing..." : "↻ Retry AI Analysis"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Top Metrics Row */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px", marginBottom: "20px" }}>
+                  <div
+                    style={{
+                      background: "#f0fdf4",
+                      border: "1px solid #bbf7d0",
+                      borderRadius: "8px",
+                      padding: "14px 16px",
+                    }}
+                  >
+                    <div style={{ fontSize: "11px", color: "#166534", fontWeight: 700 }}>RECOVERY PROBABILITY</div>
+                    <div style={{ fontSize: "24px", fontWeight: 800, color: "#15803d", margin: "4px 0 2px" }}>
+                      {Math.round((activeIncident.analysis.recoveryProbability || 0.85) * 100)}%
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#166534" }}>Confidence score via Gemini reasoning</div>
+                  </div>
+
+                  <div
+                    style={{
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: "8px",
+                      padding: "14px 16px",
+                    }}
+                  >
+                    <div style={{ fontSize: "11px", color: "#1e40af", fontWeight: 700 }}>EXPECTED RECOVERABLE</div>
+                    <div style={{ fontSize: "24px", fontWeight: 800, color: "#1d4ed8", margin: "4px 0 2px" }}>
+                      ₹{Number(activeIncident.analysis.expectedRecoverableRevenue || 0).toLocaleString()} {activeIncident.incident.currency}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#1e40af" }}>
+                      Out of ₹{activeIncident.incident.amount.toLocaleString()} at risk
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      background: "#faf5ff",
+                      border: "1px solid #e9d5ff",
+                      borderRadius: "8px",
+                      padding: "14px 16px",
+                    }}
+                  >
+                    <div style={{ fontSize: "11px", color: "#6b21a8", fontWeight: 700 }}>RECOMMENDED TIMING</div>
+                    <div style={{ fontSize: "16px", fontWeight: 800, color: "#7e22ce", margin: "8px 0 4px" }}>
+                      {activeIncident.analysis.recommendedTiming || "Immediate T+3min"}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#6b21a8" }}>Optimized execution window</div>
+                  </div>
+                </div>
+
+                {/* Grounded Evidence Tags */}
+                <div style={{ marginBottom: "18px" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 800, color: "#475569", marginBottom: "8px" }}>
+                    GROUNDED TELEMETRY EVIDENCE EXTRACTED BY AGENT:
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }} id="evidence-chips-list">
+                    {(activeIncident.analysis.evidence || activeIncident.analysis.relevantEvidence || [
+                      `Decline code: ${activeIncident.incident.failureCode}`,
+                      `Customer: ${activeIncident.customer.name}`,
+                      `Payment rail: ${activeIncident.incident.paymentMethod}`,
+                    ]).map((ev: string, i: number) => (
+                      <span key={i} className="evidence-tag-chip">
+                        <i>✓</i>
+                        <span>{ev}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Strategy Callout */}
+                <div className="strategy-callout-box" id="strategy-callout-panel">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
+                    <div>
+                      <span className="status-pill purple" style={{ marginBottom: "4px" }}>
+                        AUTONOMOUS STRATEGY SELECTED
+                      </span>
+                      <h4 style={{ fontSize: "15px", margin: "4px 0", color: "#172a34", fontWeight: 800 }}>
+                        {activeIncident.analysis.selectedStrategy}
+                      </h4>
+                    </div>
+                    <span className="status-pill info">{activeIncident.analysis.recommendedTiming}</span>
+                  </div>
+                  <p style={{ fontSize: "12px", color: "#334155", lineHeight: "18px", margin: "8px 0" }}>
+                    <strong>Mathematical & Algorithmic Justification:</strong>{" "}
+                    {activeIncident.analysis.strategyJustification}
+                  </p>
+                </div>
+
+                {/* Root Cause & Risk Assessment */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
+                    <h4 style={{ fontSize: "13px", margin: "0 0 8px", color: "#172a34", fontWeight: 800 }}>
+                      🔍 Root-Cause Diagnosis
+                    </h4>
+                    <p style={{ fontSize: "12px", color: "#475569", lineHeight: "18px", margin: 0 }}>
+                      {activeIncident.analysis.rootCause}
+                    </p>
+                  </div>
+
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
+                    <h4 style={{ fontSize: "13px", margin: "0 0 8px", color: "#172a34", fontWeight: 800 }}>
+                      ⚠️ Key Risk Factors & Mitigation
+                    </h4>
+                    <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "12px", color: "#475569", lineHeight: "18px" }}>
+                      {(activeIncident.analysis.keyRiskFactors || [
+                        "Repeated batch debits may trigger bank anti-fraud locks",
+                        "High customer LTV justifies courteous multi-channel engagement",
+                      ]).map((risk: string, idx: number) => (
+                        <li key={idx} style={{ marginBottom: "4px" }}>
+                          {risk}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Alternative Strategies & Escalation */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
+                    <h4 style={{ fontSize: "13px", margin: "0 0 8px", color: "#172a34", fontWeight: 800 }}>
+                      ⚖️ Alternative Strategies Considered
+                    </h4>
+                    <p style={{ fontSize: "12px", color: "#475569", lineHeight: "18px", margin: 0 }}>
+                      {activeIncident.analysis.alternativeStrategiesConsidered ||
+                        "Fallback: Manual phone outreach considered but deprioritized due to high touchpoint cost and slower resolution time."}
+                    </p>
+                  </div>
+
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
+                    <h4 style={{ fontSize: "13px", margin: "0 0 8px", color: "#172a34", fontWeight: 800 }}>
+                      🚨 Escalation Criteria
+                    </h4>
+                    <p style={{ fontSize: "12px", color: "#475569", lineHeight: "18px", margin: 0 }}>
+                      {activeIncident.analysis.escalationCriteria ||
+                        "Escalate to human billing team if payment fails after 2 smart retries or if customer disputes debit."}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action Execution Dispatcher */}
+                <div
+                  style={{
+                    marginTop: "20px",
+                    background: "#ffffff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "8px",
+                    padding: "16px",
+                  }}
+                  id="action-dispatch-panel"
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <div>
+                      <h4 style={{ fontSize: "13px", margin: 0, fontWeight: 800, color: "#172a34" }}>
+                        Sandbox Recovery Actions Dispatch Center
+                      </h4>
+                      <p style={{ fontSize: "11.5px", color: "#64748b", margin: "2px 0 0" }}>
+                        Simulate acquirer and gateway recovery actions without modifying production databases.
+                      </p>
+                    </div>
+                    <span className="status-pill success">100% Sandbox Safe</span>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                    <button
+                      className="action-button"
+                      onClick={() =>
+                        handleExecuteAction(
+                          activeIncident.analysis.recommendedAction || "SMART_RETRY",
+                          activeIncident.analysis.selectedStrategy
+                        )
+                      }
+                      disabled={executingAction !== null}
+                      style={{ fontSize: "12px", padding: "8px 16px" }}
+                    >
+                      {executingAction ? "Dispatching..." : `⚡ Dispatch Recommended (${activeIncident.analysis.recommendedAction || "SMART_RETRY"})`}
+                    </button>
+
+                    <button
+                      className="outline-button"
+                      onClick={() => handleExecuteAction("WHATSAPP_FALLBACK", "1-Click WhatsApp Instant UPI Fallback")}
+                      disabled={executingAction !== null}
+                      style={{ fontSize: "12px", padding: "8px 16px" }}
+                    >
+                      💬 Dispatch WhatsApp UPI Fallback
+                    </button>
+
+                    <button
+                      className="outline-button"
+                      onClick={() => handleExecuteAction("TOKEN_UPDATE_REQUEST", "RBI Card Tokenization Update Request")}
+                      disabled={executingAction !== null}
+                      style={{ fontSize: "12px", padding: "8px 16px" }}
+                    >
+                      💳 Request Tokenization Update
+                    </button>
+
+                    <button
+                      className="outline-button"
+                      onClick={() => handleExecuteAction("LOCK_PROMISE_TO_PAY", "Lock 72h Grace Period Promise-to-Pay")}
+                      disabled={executingAction !== null}
+                      style={{ fontSize: "12px", padding: "8px 16px" }}
+                    >
+                      🤝 Lock Promise-to-Pay
+                    </button>
+                  </div>
+                </div>
+
+                {/* Simulation Output Box if simulated */}
+                {simulationResult && (
+                  <div className="sandbox-simulation-box" style={{ marginTop: "20px" }} id="simulation-output-telemetry">
+                    <div className="sim-header">
+                      <span style={{ color: "#4ade80", fontWeight: 800 }}>
+                        ⚡ SIMULATION OUTCOME: {simulationResult.status}
+                      </span>
+                      <span style={{ fontSize: "11px", color: "#94a3b8" }}>{simulationResult.timestamp}</span>
+                    </div>
+                    <div>
+                      [SIMULATED-ACK] Dispatched: <strong>{simulationResult.actionName}</strong>
+                    </div>
+                    <div>
+                      [GATEWAY-METRICS] Latency: <strong>{simulationResult.gatewayLatency}</strong> | PSP Response:{" "}
+                      <code>{simulationResult.pspResponseCode}</code>
+                    </div>
+                    <div>
+                      [PROJECTED-REVENUE] Projected Recovery:{" "}
+                      <strong style={{ color: "#d6f36b" }}>₹{simulationResult.projectedRecovery.toLocaleString()}</strong>
+                    </div>
+                    <div style={{ color: "#94a3b8", marginTop: "6px" }}>
+                      ✓ {simulationResult.telemetryNotes}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 2: MULTI-CHANNEL PREVIEWS */}
+            {activeTab === "MESSAGES" && (
+              <div className="message-preview-container" id="tab-content-messages">
+                <div style={{ display: "flex", gap: "10px", justifyContent: "center", marginBottom: "20px" }}>
+                  <button
+                    className={`preset-chip-btn ${messageChannel === "WHATSAPP" ? "active" : ""}`}
+                    onClick={() => setMessageChannel("WHATSAPP")}
+                    id="channel-whatsapp-btn"
+                  >
+                    💬 WhatsApp Preview
+                  </button>
+                  <button
+                    className={`preset-chip-btn ${messageChannel === "SMS" ? "active" : ""}`}
+                    onClick={() => setMessageChannel("SMS")}
+                    id="channel-sms-btn"
+                  >
+                    📱 SMS Preview
+                  </button>
+                  <button
+                    className={`preset-chip-btn ${messageChannel === "EMAIL" ? "active" : ""}`}
+                    onClick={() => setMessageChannel("EMAIL")}
+                    id="channel-email-btn"
+                  >
+                    ✉️ Email Draft
+                  </button>
+                </div>
+
+                {messageChannel === "WHATSAPP" && (
+                  <div className="whatsapp-mockup" id="whatsapp-preview-card">
+                    <div
+                      style={{
+                        background: "#075e54",
+                        color: "#ffffff",
+                        padding: "10px 14px",
+                        borderRadius: "8px 8px 0 0",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        display: "flex",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <span>Recoverly Verified Billing Bot</span>
+                      <span style={{ fontSize: "10px" }}>Active Now</span>
+                    </div>
+                    <div className="whatsapp-bubble" style={{ marginTop: "12px" }}>
+                      <div>{activeIncident.analysis.customerMessage?.whatsapp}</div>
+                      <a href="#simulated" className="whatsapp-action-btn" onClick={(e) => e.preventDefault()}>
+                        ⚡ Complete Payment in 1-Click
+                      </a>
+                      <span className="msg-time">Just now • Read</span>
+                    </div>
+                  </div>
+                )}
+
+                {messageChannel === "SMS" && (
+                  <div className="sms-mockup" id="sms-preview-card">
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        color: "#64748b",
+                        textAlign: "center",
+                        marginBottom: "10px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      SMS from RECOVR (Sender: VM-RCVRLY)
+                    </div>
+                    <div className="sms-bubble">
+                      {activeIncident.analysis.customerMessage?.sms}
+                    </div>
+                  </div>
+                )}
+
+                {messageChannel === "EMAIL" && (
+                  <div className="email-mockup" id="email-preview-card">
+                    <div className="email-header-row">
+                      <strong>To:</strong> {activeIncident.customer.name} &lt;{activeIncident.customer.email}&gt;
+                    </div>
+                    <div className="email-header-row">
+                      <strong>From:</strong> Recoverly Billing Concierge &lt;billing@recoverly.test&gt;
+                    </div>
+                    <div className="email-subject">
+                      Subject: {activeIncident.analysis.customerMessage?.email?.subject}
+                    </div>
+                    <div className="email-body-text">
+                      {activeIncident.analysis.customerMessage?.email?.body}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: SUPABASE CUSTOMER GROUND TRUTH */}
+            {activeTab === "SUPABASE_CONTEXT" && (
+              <div style={{ padding: "20px 24px" }} id="tab-content-supabase-context">
+                <div style={{ marginBottom: "16px" }}>
+                  <h3 style={{ fontSize: "14px", margin: 0, fontWeight: 800, color: "#172a34" }}>
+                    Live Supabase Telemetry Feeding Gemini Reasoning
+                  </h3>
+                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
+                    The AI engine ingested these specific database records to formulate its bounded strategy.
+                  </p>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px" }}>
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>Past Invoices</span>
+                    <strong style={{ display: "block", fontSize: "20px", color: "#172a34", marginTop: "2px" }}>
+                      {activeIncident.context.invoicesCount}
+                    </strong>
+                  </div>
+
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px" }}>
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>Active Subscriptions</span>
+                    <strong style={{ display: "block", fontSize: "20px", color: "#172a34", marginTop: "2px" }}>
+                      {activeIncident.context.subscriptionsCount}
+                    </strong>
+                  </div>
+
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px" }}>
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>Past Transactions</span>
+                    <strong style={{ display: "block", fontSize: "20px", color: "#172a34", marginTop: "2px" }}>
+                      {activeIncident.context.transactionsCount}
+                    </strong>
+                  </div>
+
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px" }}>
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>Historical Cases</span>
+                    <strong style={{ display: "block", fontSize: "20px", color: "#172a34", marginTop: "2px" }}>
+                      {activeIncident.context.recoveryCasesCount}
+                    </strong>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                    borderRadius: "8px",
+                    padding: "16px",
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: "11px",
+                    lineHeight: "17px",
+                    maxHeight: "280px",
+                    overflowY: "auto",
+                  }}
+                >
+                  <div style={{ color: "#38bdf8", marginBottom: "8px" }}>
+                    // Supabase Grounded Customer Payload:
+                  </div>
+                  <pre style={{ margin: 0 }}>
+                    {JSON.stringify(
+                      {
+                        customer: activeIncident.customer,
+                        contextSummary: {
+                          invoicesCount: activeIncident.context.invoicesCount,
+                          subscriptionsCount: activeIncident.context.subscriptionsCount,
+                          transactionsCount: activeIncident.context.transactionsCount,
+                          paymentEventsCount: activeIncident.context.paymentEventsCount,
+                        },
+                        sampleInvoices: activeIncident.context.sampleInvoices,
+                        sampleSubscriptions: activeIncident.context.sampleSubscriptions,
+                      },
+                      null,
+                      2
+                    )}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 4: SANDBOX AUDIT TRAIL */}
+            {activeTab === "AUDIT_TRAIL" && (
+              <div style={{ padding: "20px 24px" }} id="tab-content-audit-trail">
+                <div style={{ marginBottom: "16px" }}>
+                  <h3 style={{ fontSize: "14px", margin: 0, fontWeight: 800, color: "#172a34" }}>
+                    Immutable Sandbox Audit Trail
+                  </h3>
+                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
+                    Chronological lifecycle events for Incident {activeIncident.incident.id}. Verified 0 mutations to production database.
+                  </p>
+                </div>
+
+                <div className="activity-timeline" id="sandbox-audit-timeline">
+                  {activeIncident.lifecycle.map((entry, idx) => (
+                    <div key={idx} className="timeline-item" style={{ paddingBottom: "16px" }}>
+                      <div className="timeline-dot" style={{ background: entry.status === "COMPLETED" ? "#22c55e" : "#0284c7" }}></div>
+                      <div className="timeline-content">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontWeight: 800, fontSize: "12.5px", color: "#172a34" }}>
+                            [{entry.step}] {entry.title}
+                          </span>
+                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: "10.5px", color: "#64748b" }}>
+                            {entry.timestamp}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "12px", color: "#475569", marginTop: "4px", lineHeight: "17px" }}>
+                          {entry.detail}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

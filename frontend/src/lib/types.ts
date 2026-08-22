@@ -308,6 +308,208 @@ export interface ScenarioSimulationResult {
   };
 }
 
+export interface ScenarioTypeConfig {
+  key: string;
+  name: string;
+  tag: string;
+  category: "CARD" | "UPI" | "INVOICE" | "SUBSCRIPTION" | "CHECKOUT" | "CHURN";
+  defaultSeverity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  description: string;
+  defaultPaymentMethod: string;
+  defaultFailureCode: string;
+  defaultChannel: "WHATSAPP" | "SMS" | "EMAIL";
+  sampleBillingContext: string;
+  suggestedAmount: number;
+}
+
+export interface CreateSandboxIncidentInput {
+  scenarioTypeKey: string;
+  customerId?: string;
+  customerCustom?: {
+    name: string;
+    email: string;
+    customer_type?: string;
+  };
+  amount: number;
+  currency?: string;
+  paymentMethod?: string;
+  failureCode?: string;
+  severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  billingContext?: string;
+  customInstruction?: string;
+}
+
+export interface StructuredAIAnalysis {
+  detectedRisk: string;
+  relevantEvidence: string[];
+  evidence?: string[];
+  rootCause: string;
+  aiReasoning: string;
+  selectedStrategy: string;
+  strategyJustification: string;
+  recommendedAction: string;
+  recommendedTiming: string;
+  recoveryProbability: number;
+  expectedRecoveryAmount: number;
+  expectedRecoverableRevenue?: number;
+  keyRiskFactors?: string[];
+  alternativeStrategiesConsidered?: string;
+  escalationCriteria?: string;
+  alternativeActions?: Array<{
+    action: string;
+    strategy: string;
+    projectedProbability?: number;
+    tradeoff?: string;
+  }>;
+  escalationReason?: string;
+  customerMessage: {
+    whatsapp: string;
+    sms: string;
+    email: {
+      subject: string;
+      body: string;
+    };
+  };
+  confidence?: number;
+  analysisTimestamp?: string;
+  aiError?: string | null;
+  unavailable?: boolean;
+}
+
+export interface SandboxActionRecord {
+  id: string;
+  incidentId: string;
+  actionType: string;
+  actionTitle: string;
+  status: string;
+  gatewayLatency: string;
+  pspResponseCode: string;
+  projectedRecovery: number;
+  operatorName?: string;
+  reason?: string;
+  executedAt: string;
+  details?: string;
+}
+
+export interface SandboxIncident {
+  id: string;
+  label?: string;
+  isSandbox: boolean;
+  scenario_type: string;
+  scenario_type_name: string;
+  category: "CARD" | "UPI" | "INVOICE" | "SUBSCRIPTION" | "CHECKOUT" | "CHURN" | string;
+  customer_id: string;
+  customer_name: string;
+  customer_email: string;
+  customer_type: "INDIVIDUAL" | "BUSINESS" | "ENTERPRISE" | string;
+  amount: number;
+  currency: string;
+  payment_method: string;
+  payment_rail: string;
+  failure_reason: string;
+  billing_context: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  status: "OPEN" | "ANALYZED" | "ACTION_SIMULATED" | "ACTION_DISPATCHED" | "RECOVERED" | "ESCALATED" | "CLOSED";
+  analysis: StructuredAIAnalysis | null;
+  lifecycle: SandboxAgentLifecycleStep[];
+  actions: SandboxActionRecord[];
+  customer_context?: {
+    transactionsCount: number;
+    invoicesCount: number;
+    subscriptionsCount: number;
+    recoveryCasesCount: number;
+    paymentEventsCount: number;
+    sampleTransactions?: Transaction[];
+    sampleInvoices?: Invoice[];
+    sampleSubscriptions?: Subscription[];
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSandboxIncidentRequest {
+  scenarioTypeKey: string;
+  customerId?: string;
+  customerCustom?: {
+    name: string;
+    email: string;
+    customer_type?: string;
+  };
+  amount: number;
+  currency?: string;
+  paymentMethod?: string;
+  paymentRail?: string;
+  failureCode?: string;
+  severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  billingContext?: string;
+  customInstruction?: string;
+  autoAnalyze?: boolean;
+}
+
+export interface SandboxIncidentPayload {
+  id: string;
+  label: string;
+  isSandbox: boolean;
+  status?: string;
+  scenarioTypeKey: string;
+  scenarioTypeName: string;
+  tag: string;
+  category: "CARD" | "UPI" | "INVOICE" | "SUBSCRIPTION" | "CHECKOUT" | "CHURN";
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  amount: number;
+  currency: string;
+  paymentMethod: string;
+  failureCode: string;
+  billingContext: string;
+  createdAt: string;
+}
+
+export interface SandboxIncidentAnalysis extends StructuredAIAnalysis {
+  aiAssessment?: string;
+  expectedRecoverableRevenue?: number;
+  keyRiskFactors?: string[];
+}
+
+export interface SandboxAgentLifecycleStep {
+  step: "DETECT" | "ANALYZE" | "DECIDE" | "ACT_SIMULATE" | "OBSERVE" | "AUDIT";
+  title: string;
+  status: "COMPLETED" | "ACTIVE" | "PENDING";
+  timestamp: string;
+  detail: string;
+}
+
+export interface SandboxIncidentResponse {
+  incident: SandboxIncidentPayload;
+  customer: Customer | { id: string; name: string; email: string; customer_type: string; created_at?: string };
+  context: {
+    transactionsCount: number;
+    invoicesCount: number;
+    subscriptionsCount: number;
+    recoveryCasesCount: number;
+    paymentEventsCount: number;
+    sampleTransactions?: Transaction[];
+    sampleInvoices?: Invoice[];
+    sampleSubscriptions?: Subscription[];
+  };
+  analysis: StructuredAIAnalysis;
+  lifecycle: SandboxAgentLifecycleStep[];
+  actions?: SandboxActionRecord[];
+  record?: SandboxIncident;
+}
+
+export interface SandboxSimulationResult {
+  incidentId: string;
+  actionName: string;
+  status: string;
+  timestamp: string;
+  gatewayLatency: string;
+  pspResponseCode: string;
+  projectedRecovery: number;
+  telemetryNotes: string;
+  lifecycleUpdates: SandboxAgentLifecycleStep[];
+}
+
 export interface DemoScenarioItem {
   id: string;
   key: string;

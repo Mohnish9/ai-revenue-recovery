@@ -1,6 +1,12 @@
 import { useState, useEffect } from "react";
-import type { Transaction, RecoveryCase } from "../lib/types";
-import { fetchTransactions, fetchRecoveryCases, executeCaseAction } from "../lib/api";
+import type { Transaction, RecoveryCase, SandboxIncidentResponse } from "../lib/types";
+import {
+  fetchTransactions,
+  fetchRecoveryCases,
+  executeCaseAction,
+  fetchSandboxIncidentsApi,
+  executeSandboxIncidentActionApi,
+} from "../lib/api";
 import { ActionConfirmModal, type ActionModalConfig } from "../components/ActionConfirmModal";
 
 interface FailedPaymentsPageProps {
@@ -10,6 +16,7 @@ interface FailedPaymentsPageProps {
 export function FailedPaymentsPage({ onSelectCase }: FailedPaymentsPageProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [cases, setCases] = useState<RecoveryCase[]>([]);
+  const [sandboxIncidents, setSandboxIncidents] = useState<SandboxIncidentResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [methodFilter, setMethodFilter] = useState("ALL");
@@ -23,12 +30,23 @@ export function FailedPaymentsPage({ onSelectCase }: FailedPaymentsPageProps) {
     try {
       setLoading(true);
       setError(null);
-      const [txRes, casesRes] = await Promise.all([
-        fetchTransactions(100, "FAILED", methodFilter !== "ALL" ? methodFilter : undefined),
-        fetchRecoveryCases(100),
+      const [txRes, casesRes, sandboxRes] = await Promise.all([
+        fetchTransactions(100, "FAILED", methodFilter !== "ALL" ? methodFilter : undefined).catch(() => []),
+        fetchRecoveryCases(100).catch(() => []),
+        fetchSandboxIncidentsApi().catch(() => []),
       ]);
       setTransactions(txRes);
       setCases(casesRes);
+      setSandboxIncidents(
+        sandboxRes.filter(
+          (s) =>
+            s.incident.scenarioTypeKey === "insufficient-funds" ||
+            s.incident.scenarioTypeKey === "expired-card" ||
+            s.incident.scenarioTypeKey === "3ds-failure" ||
+            s.incident.scenarioTypeKey === "gateway-timeout" ||
+            s.incident.tag === "PAYMENT_FAILED"
+        )
+      );
     } catch (e: any) {
       setError(e.message || "Failed to load failed transactions");
     } finally {
@@ -65,7 +83,22 @@ export function FailedPaymentsPage({ onSelectCase }: FailedPaymentsPageProps) {
     });
   };
 
-  const filtered = transactions.filter((t) => {
+  const handleSandboxAction = async (sb: SandboxIncidentResponse, actionType: "SEND_PAYMENT_LINK" | "RETRY_PAYMENT") => {
+    try {
+      const res = await executeSandboxIncidentActionApi(sb.incident.id, {
+        actionType,
+        strategyName: sb.analysis?.selectedStrategy || "Autonomous Safe Action",
+        reason: "Triggered from Failed Payments Triage page",
+      });
+      setActionSuccess(`[SANDBOX] Dispatched simulated ${actionType}. Gateway response: ${res.simulation.simulatedGatewayResponse.authCode} in ${res.simulation.simulatedGatewayResponse.latencyMs}ms.`);
+      await loadData();
+      setTimeout(() => setActionSuccess(null), 6000);
+    } catch (err: any) {
+      alert(`Simulation failed: ${err.message}`);
+    }
+  };
+
+  const filteredTransactions = transactions.filter((t) => {
     if (!searchTerm) return true;
     const q = searchTerm.toLowerCase();
     return (
@@ -76,7 +109,20 @@ export function FailedPaymentsPage({ onSelectCase }: FailedPaymentsPageProps) {
     );
   });
 
-  const totalFailed = filtered.reduce((acc, t) => acc + Number(t.amount || 0), 0);
+  const filteredSandbox = sandboxIncidents.filter((sb) => {
+    if (!searchTerm) return true;
+    const q = searchTerm.toLowerCase();
+    return (
+      sb.incident.failureCode.toLowerCase().includes(q) ||
+      sb.incident.scenarioTypeName.toLowerCase().includes(q) ||
+      sb.customer.name.toLowerCase().includes(q) ||
+      sb.customer.email.toLowerCase().includes(q)
+    );
+  });
+
+  const totalFailed =
+    filteredTransactions.reduce((acc, t) => acc + Number(t.amount || 0), 0) +
+    filteredSandbox.reduce((acc, s) => acc + Number(s.incident.amount || 0), 0);
 
   return (
     <div className="page">
@@ -84,20 +130,33 @@ export function FailedPaymentsPage({ onSelectCase }: FailedPaymentsPageProps) {
         <div>
           <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             <span>Operations & Triage</span>
-            <span className="status-pill warning" style={{ fontSize: "9px" }}>⚡ REAL DB ACTIONS ENABLED</span>
+            <span className="status-pill warning" style={{ fontSize: "9px" }}>⚡ REAL DB + SANDBOX</span>
           </div>
           <h1>Failed Payments Triage</h1>
           <p>Real-time monitoring and intervention for declined transactions and payment gateway failures.</p>
         </div>
-        <div style={{ background: "#ffffff", border: "1px solid #fee2e2", padding: "8px 14px", borderRadius: "8px", fontSize: "12px" }}>
-          <span style={{ color: "#64748b" }}>Failed Volume: </span>
-          <strong style={{ color: "#b91c1c" }}>₹{totalFailed.toLocaleString()}</strong>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          <div style={{ background: "#ffffff", border: "1px solid #fee2e2", padding: "8px 14px", borderRadius: "8px", fontSize: "12px" }}>
+            <span style={{ color: "#64748b" }}>Failed Volume: </span>
+            <strong style={{ color: "#b91c1c" }}>₹{totalFailed.toLocaleString()}</strong>
+          </div>
+          <button className="primary-button" onClick={loadData}>↻ Refresh</button>
         </div>
       </div>
 
       {actionSuccess && (
         <div style={{ background: "#dcfce7", border: "1px solid #86efac", color: "#166534", padding: "12px 16px", borderRadius: "8px", marginBottom: "16px", fontSize: "12px" }}>
           ✓ {actionSuccess}
+        </div>
+      )}
+
+      {/* Sandbox Notice Banner */}
+      {sandboxIncidents.length > 0 && (
+        <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: "8px", padding: "10px 14px", marginBottom: "14px", fontSize: "11.5px", color: "#92400e", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>
+            🔒 <strong>{sandboxIncidents.length} Sandbox Payment Failure(s) Active</strong> in triage. Actions on these items run in isolated simulation.
+          </span>
+          <span className="status-pill warning" style={{ fontSize: "9px" }}>SANDBOX ISOLATED</span>
         </div>
       )}
 
@@ -143,7 +202,7 @@ export function FailedPaymentsPage({ onSelectCase }: FailedPaymentsPageProps) {
           </select>
 
           <div style={{ marginLeft: "auto", fontSize: "11px", color: "#64748b" }}>
-            Found <strong>{filtered.length}</strong> failed transactions
+            Found <strong>{filteredTransactions.length + filteredSandbox.length}</strong> failed transactions
           </div>
         </div>
 
@@ -158,7 +217,7 @@ export function FailedPaymentsPage({ onSelectCase }: FailedPaymentsPageProps) {
             <h3>Unable to load failed transactions</h3>
             <p>{error}</p>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : filteredTransactions.length === 0 && filteredSandbox.length === 0 ? (
           <div className="empty-state">
             <div className="empty-illustration">✓</div>
             <h3>No Failed Payments Found</h3>
@@ -173,13 +232,68 @@ export function FailedPaymentsPage({ onSelectCase }: FailedPaymentsPageProps) {
                   <th>Amount</th>
                   <th>Method</th>
                   <th>Failure Reason</th>
-                  <th>Reference</th>
+                  <th>Environment & Ref</th>
                   <th>Date & Time</th>
                   <th>Intervention Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((t) => (
+                {/* Render Sandbox Incidents first */}
+                {filteredSandbox.map((sb) => (
+                  <tr key={sb.incident.id} style={{ background: "#fffdf5" }}>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span className="status-pill warning" style={{ fontSize: "8.5px", padding: "1px 5px" }}>🔒 SANDBOX</span>
+                        <strong>{sb.customer.name}</strong>
+                      </div>
+                      <div style={{ fontSize: "10px", color: "#94a3b8" }}>{sb.customer.email}</div>
+                    </td>
+                    <td>
+                      <strong style={{ fontSize: "13px", color: "#b91c1c" }}>
+                        {sb.incident.currency || "₹"}{Number(sb.incident.amount).toLocaleString()}
+                      </strong>
+                    </td>
+                    <td>
+                      <span className="status-pill neutral">{sb.incident.paymentMethod}</span>
+                    </td>
+                    <td>
+                      <span className="status-pill danger" style={{ maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {sb.incident.failureCode} — {sb.incident.scenarioTypeName}
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{ fontFamily: "DM Mono", fontSize: "11px", color: "#b45309" }}>
+                        {sb.incident.id.slice(0, 16)}...
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{ fontSize: "11px", color: "#64748b" }}>
+                        {new Date(sb.incident.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          className="primary-button"
+                          style={{ fontSize: "10px", padding: "4px 8px", background: "#f59e0b" }}
+                          onClick={() => handleSandboxAction(sb, "SEND_PAYMENT_LINK")}
+                        >
+                          ⚡ Sim Link
+                        </button>
+                        <button
+                          className="outline-button"
+                          style={{ fontSize: "10px", padding: "4px 8px" }}
+                          onClick={() => handleSandboxAction(sb, "RETRY_PAYMENT")}
+                        >
+                          ⚡ Sim Retry
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Render Production Transactions */}
+                {filteredTransactions.map((t) => (
                   <tr key={t.id}>
                     <td>
                       <strong>{t.customers?.name || "Customer Account"}</strong>

@@ -2,13 +2,20 @@ import type { Request, Response } from "express";
 import {
   analyzeRecoveryCaseWithAI,
   analyzeDemoScenarioWithAI,
+  analyzeSandboxIncidentWithAI,
   chatWithRecoveryAI,
+  createAndAnalyzeSandboxIncident,
+  createSandboxIncident,
   createPromiseToPay,
+  deleteSandboxIncident,
   executeRecoveryAction,
+  executeSandboxIncidentAction,
   getCustomer,
   getCustomerOperations,
+  getDemoScenarioWithContext,
   getInvoice,
   getRecoveryCase,
+  getSandboxIncident,
   getTransaction,
   listAllAgentLogs,
   listAllAuditLogs,
@@ -21,24 +28,27 @@ import {
   listInvoices,
   listPaymentEvents,
   listRecoveryCases,
+  listSandboxIncidents,
+  listScenarioTypes,
   listSubscriptions,
   listTransactions,
   parseLimit,
   simulateRecoveryScenario,
+  simulateSandboxIncident,
   updateCaseStatus,
 } from "../services/operationsService.js";
 
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 function validateId(id: string) {
-  if (!uuidPattern.test(id)) throw new Error("id must be a valid UUID");
+  if (!id || typeof id !== "string" || id.trim().length === 0) {
+    throw new Error("id must be a valid non-empty string identifier");
+  }
 }
 
 function getId(request: Request) {
   const id = request.params.id;
-  if (typeof id !== "string") throw new Error("id must be a single UUID");
+  if (typeof id !== "string") throw new Error("id must be a single string identifier");
   validateId(id);
-  return id;
+  return id.trim();
 }
 
 function sendError(response: Response, error: unknown) {
@@ -286,6 +296,49 @@ export const listPromisesController = (request: Request, response: Response) => 
 export const listEventsController = (request: Request, response: Response) => caseCollection(request, response, listCaseEvents);
 export const listAuditLogsController = (request: Request, response: Response) => caseCollection(request, response, listCaseAuditLogs);
 
+export async function listScenarioTypesController(_request: Request, response: Response) {
+  try {
+    const types = await listScenarioTypes();
+    response.json(types);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function createAndAnalyzeSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const input = request.body || {};
+    if (!input.scenarioTypeKey) {
+      response.status(400).json({ error: "scenarioTypeKey is required" });
+      return;
+    }
+    const result = await createAndAnalyzeSandboxIncident(input);
+    response.status(201).json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export function simulateSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const { incidentId, actionType, strategyName, recoveryProbability, amount } = request.body || {};
+    if (!incidentId || !actionType) {
+      response.status(400).json({ error: "incidentId and actionType are required" });
+      return;
+    }
+    const result = simulateSandboxIncident({
+      incidentId,
+      actionType,
+      strategyName,
+      recoveryProbability: recoveryProbability ? Number(recoveryProbability) : undefined,
+      amount: Number(amount) || 5000,
+    });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
 export async function listDemoScenariosController(_request: Request, response: Response) {
   try {
     const scenarios = await listDemoScenarios();
@@ -295,7 +348,7 @@ export async function listDemoScenariosController(_request: Request, response: R
   }
 }
 
-export async function analyzeDemoScenarioController(request: Request, response: Response) {
+export async function getDemoScenarioController(request: Request, response: Response) {
   try {
     const rawKey = request.params.key;
     const key = Array.isArray(rawKey) ? rawKey[0] : rawKey;
@@ -303,11 +356,91 @@ export async function analyzeDemoScenarioController(request: Request, response: 
       response.status(400).json({ error: "Scenario key is required" });
       return;
     }
-    const { custom_instruction } = request.body || {};
-    const result = await analyzeDemoScenarioWithAI(key, custom_instruction);
+    const result = await getDemoScenarioWithContext(key);
     response.json(result);
   } catch (error) {
     sendError(response, error);
   }
 }
+
+export async function listSandboxIncidentsController(request: Request, response: Response) {
+  try {
+    const { scenarioType, status, category, limit } = request.query;
+    const incidents = await listSandboxIncidents({
+      scenarioType: typeof scenarioType === "string" ? scenarioType : undefined,
+      status: typeof status === "string" ? status : undefined,
+      category: typeof category === "string" ? category : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+    response.json(incidents);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function getSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const incident = await getSandboxIncident(id);
+    await respondWithRecord(response, incident, "Sandbox incident");
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function createSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const input = request.body || {};
+    if (!input.scenarioTypeKey) {
+      response.status(400).json({ error: "scenarioTypeKey is required" });
+      return;
+    }
+    const result = await createSandboxIncident(input);
+    response.status(201).json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function analyzeSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { custom_instruction, customInstruction } = request.body || {};
+    const result = await analyzeSandboxIncidentWithAI(id, customInstruction || custom_instruction);
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function executeSandboxIncidentActionController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { actionType, strategyName, reason, operatorInfo } = request.body || {};
+    if (!actionType) {
+      response.status(400).json({ error: "actionType is required" });
+      return;
+    }
+    const result = await executeSandboxIncidentAction(id, {
+      actionType,
+      strategyName,
+      reason,
+      operatorInfo,
+    });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function deleteSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const result = await deleteSandboxIncident(id);
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
 

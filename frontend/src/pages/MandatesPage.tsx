@@ -1,11 +1,18 @@
 import { useState, useEffect } from "react";
-import type { PaymentEvent, RecoveryCase } from "../lib/types";
-import { fetchPaymentEvents, fetchRecoveryCases, executeCaseAction } from "../lib/api";
+import type { PaymentEvent, RecoveryCase, SandboxIncidentResponse } from "../lib/types";
+import {
+  fetchPaymentEvents,
+  fetchRecoveryCases,
+  executeCaseAction,
+  fetchSandboxIncidentsApi,
+  executeSandboxIncidentActionApi,
+} from "../lib/api";
 import { ActionConfirmModal, type ActionModalConfig } from "../components/ActionConfirmModal";
 
 export function MandatesPage() {
   const [events, setEvents] = useState<PaymentEvent[]>([]);
   const [cases, setCases] = useState<RecoveryCase[]>([]);
+  const [sandboxIncidents, setSandboxIncidents] = useState<SandboxIncidentResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -18,12 +25,22 @@ export function MandatesPage() {
     try {
       setLoading(true);
       setError(null);
-      const [eventsRes, casesRes] = await Promise.all([
-        fetchPaymentEvents(100, "MANDATE_FAILED"),
-        fetchRecoveryCases(100),
+      const [eventsRes, casesRes, sandboxRes] = await Promise.all([
+        fetchPaymentEvents(100, "MANDATE_FAILED").catch(() => []),
+        fetchRecoveryCases(100).catch(() => []),
+        fetchSandboxIncidentsApi().catch(() => []),
       ]);
       setEvents(eventsRes);
       setCases(casesRes);
+      setSandboxIncidents(
+        sandboxRes.filter(
+          (s) =>
+            s.incident.scenarioTypeKey === "upi-mandate-failure" ||
+            s.incident.tag === "UPI_AUTOPAY_FAILURE" ||
+            s.incident.scenarioTypeName.toLowerCase().includes("mandate") ||
+            s.incident.scenarioTypeName.toLowerCase().includes("autopay")
+        )
+      );
     } catch (e: any) {
       setError(e.message || "Failed to load mandate failures");
     } finally {
@@ -60,12 +77,37 @@ export function MandatesPage() {
     });
   };
 
-  const filtered = events.filter((ev) => {
+  const handleSandboxAction = async (sb: SandboxIncidentResponse, actionType: "REQUEST_PAYMENT_METHOD_UPDATE" | "SEND_PAYMENT_LINK") => {
+    try {
+      const res = await executeSandboxIncidentActionApi(sb.incident.id, {
+        actionType,
+        strategyName: sb.analysis?.selectedStrategy || "Autonomous Mandate Remediation",
+        reason: "Triggered from Mandates & AutoPay page",
+      });
+      setActionAlert(`[SANDBOX] Dispatched simulated ${actionType}. Gateway response: ${res.simulation.simulatedGatewayResponse.authCode}.`);
+      await loadData();
+      setTimeout(() => setActionAlert(null), 6000);
+    } catch (err: any) {
+      alert(`Simulation failed: ${err.message}`);
+    }
+  };
+
+  const filteredEvents = events.filter((ev) => {
     if (!searchTerm) return true;
     const q = searchTerm.toLowerCase();
     return (
       ev.customers?.name?.toLowerCase().includes(q) ||
       ev.customers?.email?.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredSandbox = sandboxIncidents.filter((sb) => {
+    if (!searchTerm) return true;
+    const q = searchTerm.toLowerCase();
+    return (
+      sb.customer.name.toLowerCase().includes(q) ||
+      sb.customer.email.toLowerCase().includes(q) ||
+      sb.incident.scenarioTypeName.toLowerCase().includes(q)
     );
   });
 
@@ -75,7 +117,7 @@ export function MandatesPage() {
         <div>
           <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             <span>Operations & Mandates</span>
-            <span className="status-pill warning" style={{ fontSize: "9px" }}>⚡ REAL DB ACTIONS</span>
+            <span className="status-pill warning" style={{ fontSize: "9px" }}>⚡ REAL DB + SANDBOX</span>
           </div>
           <h1>Recurring Mandates (UPI AutoPay & e-NACH)</h1>
           <p>Monitor recurring mandate execution health, handle auto-debit declines, and re-authenticate payment mandates.</p>
@@ -86,6 +128,16 @@ export function MandatesPage() {
       {actionAlert && (
         <div style={{ background: "#dcfce7", border: "1px solid #86efac", color: "#166534", padding: "12px 16px", borderRadius: "8px", marginBottom: "16px", fontSize: "12px" }}>
           ✓ {actionAlert}
+        </div>
+      )}
+
+      {/* Sandbox Notice Banner */}
+      {sandboxIncidents.length > 0 && (
+        <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: "8px", padding: "10px 14px", marginBottom: "14px", fontSize: "11.5px", color: "#92400e", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>
+            🔒 <strong>{sandboxIncidents.length} Sandbox Mandate Incident(s) Active</strong>. Actions executed here run in isolated simulation.
+          </span>
+          <span className="status-pill warning" style={{ fontSize: "9px" }}>SANDBOX ISOLATED</span>
         </div>
       )}
 
@@ -119,7 +171,7 @@ export function MandatesPage() {
           />
 
           <div style={{ marginLeft: "auto", fontSize: "11px", color: "#64748b" }}>
-            Showing <strong>{filtered.length}</strong> mandate failures
+            Showing <strong>{filteredEvents.length + filteredSandbox.length}</strong> mandate failures
           </div>
         </div>
 
@@ -134,7 +186,7 @@ export function MandatesPage() {
             <h3>Unable to load mandates</h3>
             <p>{error}</p>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : filteredEvents.length === 0 && filteredSandbox.length === 0 ? (
           <div className="empty-state">
             <div className="empty-illustration">📑</div>
             <h3>No Mandate Failures</h3>
@@ -148,13 +200,61 @@ export function MandatesPage() {
                   <th>Customer</th>
                   <th>Mandate Amount</th>
                   <th>Execution Date</th>
-                  <th>Type</th>
+                  <th>Rail & Type</th>
                   <th>Status</th>
                   <th>Intervention</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((ev) => (
+                {/* Render Sandbox Incidents first */}
+                {filteredSandbox.map((sb) => (
+                  <tr key={sb.incident.id} style={{ background: "#fffdf5" }}>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span className="status-pill warning" style={{ fontSize: "8.5px", padding: "1px 5px" }}>🔒 SANDBOX</span>
+                        <strong>{sb.customer.name}</strong>
+                      </div>
+                      <div style={{ fontSize: "10px", color: "#94a3b8" }}>{sb.customer.email}</div>
+                    </td>
+                    <td>
+                      <strong style={{ fontSize: "13px", color: "#b91c1c" }}>
+                        {sb.incident.currency || "₹"}{Number(sb.incident.amount).toLocaleString()}
+                      </strong>
+                    </td>
+                    <td>
+                      <span style={{ fontSize: "11px", color: "#64748b" }}>
+                        {new Date(sb.incident.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="status-pill danger">{sb.incident.failureCode}</span>
+                    </td>
+                    <td>
+                      <span className="status-pill warning">{sb.incident.status || "RETRY_SCHEDULED"}</span>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          className="dark-button"
+                          style={{ fontSize: "10px", padding: "4px 8px" }}
+                          onClick={() => handleSandboxAction(sb, "REQUEST_PAYMENT_METHOD_UPDATE")}
+                        >
+                          ⚡ Sim Re-auth
+                        </button>
+                        <button
+                          className="outline-button"
+                          style={{ fontSize: "10px", padding: "4px 8px" }}
+                          onClick={() => handleSandboxAction(sb, "SEND_PAYMENT_LINK")}
+                        >
+                          ⚡ Sim Intent
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Render Production Payment Events */}
+                {filteredEvents.map((ev) => (
                   <tr key={ev.id}>
                     <td>
                       <strong>{ev.customers?.name || "Customer Account"}</strong>

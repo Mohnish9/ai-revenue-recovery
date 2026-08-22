@@ -12,6 +12,9 @@ export const databaseTables = [
   "agent_logs",
   "promises_to_pay",
   "audit_logs",
+  "sandbox_incidents",
+  "sandbox_actions",
+  "sandbox_audit_logs",
 ] as const;
 
 // In-memory mock store initialized with demo data
@@ -72,6 +75,25 @@ const mockAuditLogs = [
   { id: "aud_002", recovery_case_id: "case_002", actor_type: "HUMAN", event: "PROMISE_RECORDED", details: { promise_date: "2026-08-28", source: "demo_seed" }, created_at: "2026-08-17T12:00:00Z" },
 ];
 
+const mockUsers = [
+  {
+    id: "usr_demo_001",
+    email: "mohnishkaplish92@gmail.com",
+    password: "Password123!",
+    created_at: "2026-08-01T00:00:00Z",
+    last_sign_in_at: "2026-08-22T06:00:00Z",
+    user_metadata: { name: "Mohnish Kaplish", role: "REVENUE_ADMIN" },
+  },
+  {
+    id: "usr_demo_002",
+    email: "admin@recoverly.ai",
+    password: "Password123!",
+    created_at: "2026-08-01T00:00:00Z",
+    last_sign_in_at: "2026-08-22T06:00:00Z",
+    user_metadata: { name: "Recoverly Admin", role: "REVENUE_ADMIN" },
+  },
+];
+
 const mockData: Record<string, any[]> = {
   customers: mockCustomers,
   transactions: mockTransactions,
@@ -83,14 +105,30 @@ const mockData: Record<string, any[]> = {
   promises_to_pay: mockPromisesToPay,
   agent_logs: mockAgentLogs,
   audit_logs: mockAuditLogs,
+  sandbox_incidents: [],
+  sandbox_actions: [],
+  sandbox_audit_logs: [],
 };
 
 function createMockQuery(table: string) {
-  let list = [...(mockData[table] ?? [])];
+  if (!mockData[table]) {
+    mockData[table] = [];
+  }
+  let list = [...mockData[table]];
+  let pendingUpdate: Record<string, any> | null = null;
+  let filterConditions: Array<(item: any) => boolean> = [];
+
+  const applyFilters = () => {
+    let result = [...mockData[table]];
+    for (const filter of filterConditions) {
+      result = result.filter(filter);
+    }
+    return result;
+  };
 
   const query: any = {
     select: (_fields = "*") => {
-      // populate joined customers for recovery_cases if asked
+      list = applyFilters();
       if (table === "recovery_cases") {
         list = list.map((item) => ({
           ...item,
@@ -99,8 +137,94 @@ function createMockQuery(table: string) {
       }
       return query;
     },
+    insert: (data: any) => {
+      const items = Array.isArray(data) ? data : [data];
+      const inserted: any[] = [];
+      for (const item of items) {
+        const newItem = {
+          id: item.id || `gen_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          created_at: item.created_at || new Date().toISOString(),
+          ...item,
+        };
+        mockData[table].push(newItem);
+        inserted.push(newItem);
+      }
+      list = inserted;
+      return query;
+    },
+    update: (patch: any) => {
+      pendingUpdate = patch;
+      const targetIndices = mockData[table]
+        .map((item, idx) => ({ item, idx }))
+        .filter(({ item }) => filterConditions.every((f) => f(item)))
+        .map(({ idx }) => idx);
+
+      for (const idx of targetIndices) {
+        mockData[table][idx] = {
+          ...mockData[table][idx],
+          ...patch,
+          updated_at: patch.updated_at || new Date().toISOString(),
+        };
+      }
+      list = targetIndices.map((idx) => mockData[table][idx]);
+      return query;
+    },
+    upsert: (data: any) => {
+      const items = Array.isArray(data) ? data : [data];
+      const upserted: any[] = [];
+      for (const item of items) {
+        const existingIdx = item.id
+          ? mockData[table].findIndex((x) => x.id === item.id)
+          : item.recovery_case_id
+          ? mockData[table].findIndex((x) => x.recovery_case_id === item.recovery_case_id)
+          : -1;
+
+        if (existingIdx >= 0) {
+          mockData[table][existingIdx] = {
+            ...mockData[table][existingIdx],
+            ...item,
+            updated_at: item.updated_at || new Date().toISOString(),
+          };
+          upserted.push(mockData[table][existingIdx]);
+        } else {
+          const newItem = {
+            id: item.id || `gen_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            created_at: item.created_at || new Date().toISOString(),
+            ...item,
+          };
+          mockData[table].push(newItem);
+          upserted.push(newItem);
+        }
+      }
+      list = upserted;
+      return query;
+    },
+    delete: () => {
+      const remaining = mockData[table].filter((item) => !filterConditions.every((f) => f(item)));
+      mockData[table] = remaining;
+      list = [];
+      return query;
+    },
     eq: (column: string, value: any) => {
-      list = list.filter((item) => item[column] === value);
+      const cond = (item: any) => item[column] === value;
+      filterConditions.push(cond);
+      list = list.filter(cond);
+      return query;
+    },
+    or: (expr: string) => {
+      const parts = expr.split(",");
+      const orCond = (item: any) => {
+        return parts.some((part) => {
+          const match = part.trim().match(/^([^.]+)\.ilike\.%(.+)%$/);
+          if (match) {
+            const [, col, val] = match;
+            return String(item[col] ?? "").toLowerCase().includes(val.toLowerCase());
+          }
+          return false;
+        });
+      };
+      filterConditions.push(orCond);
+      list = list.filter(orCond);
       return query;
     },
     order: (column: string, { ascending = true }: { ascending?: boolean } = {}) => {
@@ -131,40 +255,138 @@ function createMockQuery(table: string) {
   return query;
 }
 
+const mockAuth = {
+  signInWithPassword: async ({ email, password }: { email: string; password?: string }) => {
+    const user = mockUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    if (!user) {
+      // Allow any demo user in mock mode for a seamless local development experience
+      const newUser = {
+        id: `usr_${Date.now()}`,
+        email,
+        password: password || "Password123!",
+        created_at: new Date().toISOString(),
+        last_sign_in_at: new Date().toISOString(),
+        user_metadata: { name: email.split("@")[0], role: "REVENUE_ADMIN" },
+      };
+      mockUsers.push(newUser);
+      return {
+        data: {
+          user: newUser,
+          session: {
+            access_token: `mock_jwt_${newUser.id}`,
+            refresh_token: `mock_refresh_${newUser.id}`,
+            expires_at: Math.floor(Date.now() / 1000) + 86400 * 7,
+          },
+        },
+        error: null,
+      };
+    }
+    return {
+      data: {
+        user,
+        session: {
+          access_token: `mock_jwt_${user.id}`,
+          refresh_token: `mock_refresh_${user.id}`,
+          expires_at: Math.floor(Date.now() / 1000) + 86400 * 7,
+        },
+      },
+      error: null,
+    };
+  },
+  signUp: async ({ email, password, options }: { email: string; password?: string; options?: any }) => {
+    const existing = mockUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    if (existing) {
+      return { data: { user: existing, session: null }, error: { message: "User already registered" } };
+    }
+    const newUser = {
+      id: `usr_${Date.now()}`,
+      email,
+      password: password || "Password123!",
+      created_at: new Date().toISOString(),
+      last_sign_in_at: new Date().toISOString(),
+      user_metadata: options?.data || { name: email.split("@")[0], role: "REVENUE_OPERATOR" },
+    };
+    mockUsers.push(newUser);
+    return {
+      data: {
+        user: newUser,
+        session: {
+          access_token: `mock_jwt_${newUser.id}`,
+          refresh_token: `mock_refresh_${newUser.id}`,
+          expires_at: Math.floor(Date.now() / 1000) + 86400 * 7,
+        },
+      },
+      error: null,
+    };
+  },
+  getUser: async (token: string) => {
+    if (!token) return { data: { user: null }, error: { message: "No token provided" } };
+    const userIdMatch = token.replace("mock_jwt_", "").replace("Bearer ", "");
+    const user = mockUsers.find((u) => u.id === userIdMatch) || mockUsers[0];
+    return { data: { user }, error: null };
+  },
+  signOut: async () => {
+    return { error: null };
+  },
+  admin: {
+    createUser: async ({ email, password, user_metadata }: { email: string; password?: string; email_confirm?: boolean; user_metadata?: any }) => {
+      const existing = mockUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+      if (existing) {
+        return { data: { user: existing }, error: { message: "User already registered" } };
+      }
+      const newUser = {
+        id: `usr_${Date.now()}`,
+        email,
+        password: password || "Password123!",
+        created_at: new Date().toISOString(),
+        last_sign_in_at: new Date().toISOString(),
+        user_metadata: user_metadata || { name: email.split("@")[0], role: "REVENUE_ADMIN" },
+      };
+      mockUsers.push(newUser);
+      return { data: { user: newUser }, error: null };
+    },
+    listUsers: async () => {
+      return { data: { users: mockUsers }, error: null };
+    },
+    signOut: async () => {
+      return { error: null };
+    },
+  },
+};
+
 const mockSupabaseClient: any = {
   from: (table: string) => createMockQuery(table),
+  auth: mockAuth,
 };
 
 let client: SupabaseClient | undefined;
 
 export function getSupabaseClient(): SupabaseClient {
   if (client) return client;
-  const missing = requiredEnvironment.filter((key) => !process.env[key]);
-  if (missing.length > 0) {
-    // Return mock client when Supabase credentials are not provided
+  const url = (process.env.SUPABASE_URL || "").trim();
+  const key = (process.env.SUPABASE_SECRET_KEY || "").trim();
+  if (!url || !key) {
+    // Return in-memory mock client when credentials are not configured
     return mockSupabaseClient as unknown as SupabaseClient;
   }
-  try {
-    client = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-    return client;
-  } catch {
-    return mockSupabaseClient as unknown as SupabaseClient;
-  }
+  client = createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  return client;
 }
 
 export async function getDatabaseStatus() {
+  const url = (process.env.SUPABASE_URL || "").trim();
+  const key = (process.env.SUPABASE_SECRET_KEY || "").trim();
+  if (!url || !key) {
+    return {
+      connected: true,
+      mock: true,
+      tables: databaseTables.map((table) => ({ table, available: true })),
+      error: undefined,
+    };
+  }
   try {
-    const hasEnv = requiredEnvironment.every((key) => !!process.env[key]);
-    if (!hasEnv) {
-      return {
-        connected: true,
-        mock: true,
-        tables: databaseTables.map((table) => ({ table, available: true })),
-        error: undefined,
-      };
-    }
     const supabase = getSupabaseClient();
     const tableChecks = await Promise.all(databaseTables.map(async (table) => {
       const { error } = await supabase.from(table).select("id").limit(1);
@@ -179,10 +401,10 @@ export async function getDatabaseStatus() {
     };
   } catch (error) {
     return {
-      connected: true,
-      mock: true,
-      tables: databaseTables.map((table) => ({ table, available: true })),
-      error: error instanceof Error ? error.message : "Using in-memory mock store",
+      connected: false,
+      mock: false,
+      tables: databaseTables.map((table) => ({ table, available: false, error: error instanceof Error ? error.message : "Connection failed" })),
+      error: error instanceof Error ? error.message : "Failed to connect to Supabase database",
     };
   }
 }

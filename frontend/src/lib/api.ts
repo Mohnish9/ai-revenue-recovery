@@ -3,6 +3,7 @@ import type {
   AgentLog,
   AuditLog,
   AuthResponse,
+  CreateSandboxIncidentInput,
   Customer,
   CustomerOperationsOverview,
   DashboardSummary,
@@ -15,7 +16,10 @@ import type {
   PromiseToPay,
   RecoveryAction,
   RecoveryCase,
+  SandboxIncidentResponse,
+  SandboxSimulationResult,
   ScenarioSimulationResult,
+  ScenarioTypeConfig,
   Subscription,
   Transaction,
   UserProfile,
@@ -258,9 +262,106 @@ export async function simulateRecoveryScenario(params: {
   });
 }
 
-// Recovery Demo Experience (9 Scenarios with Gemini AI & Supabase Data)
+// Dynamic Sandbox Revenue Incident Creation & Autonomous Agent
+export async function fetchScenarioTypesApi(): Promise<ScenarioTypeConfig[]> {
+  return fetchJson<ScenarioTypeConfig[]>("/demo/scenario-types");
+}
+
+export async function fetchSandboxIncidentsApi(params?: {
+  scenarioType?: string;
+  status?: string;
+  category?: string;
+  limit?: number;
+}): Promise<SandboxIncidentResponse[]> {
+  const query = new URLSearchParams();
+  if (params?.scenarioType) query.append("scenarioType", params.scenarioType);
+  if (params?.status) query.append("status", params.status);
+  if (params?.category) query.append("category", params.category);
+  if (params?.limit) query.append("limit", String(params.limit));
+  const queryString = query.toString() ? `?${query.toString()}` : "";
+  return fetchJson<SandboxIncidentResponse[]>(`/sandbox/incidents${queryString}`);
+}
+
+export async function fetchSandboxIncidentApi(id: string): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>(`/sandbox/incidents/${id}`);
+}
+
+export async function createSandboxIncidentApi(
+  input: CreateSandboxIncidentInput
+): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>("/sandbox/incidents", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function analyzeSandboxIncidentApi(
+  id: string,
+  customInstruction?: string
+): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>(`/sandbox/incidents/${id}/analyze`, {
+    method: "POST",
+    body: JSON.stringify({ customInstruction }),
+  });
+}
+
+export async function executeSandboxIncidentActionApi(
+  id: string,
+  params: {
+    actionType: string;
+    strategyName?: string;
+    reason?: string;
+    operatorInfo?: { name?: string; email?: string };
+  }
+): Promise<{ simulation: SandboxSimulationResult; updatedIncident: SandboxIncidentResponse }> {
+  return fetchJson<{ simulation: SandboxSimulationResult; updatedIncident: SandboxIncidentResponse }>(
+    `/sandbox/incidents/${id}/actions`,
+    {
+      method: "POST",
+      body: JSON.stringify(params),
+    }
+  );
+}
+
+export async function deleteSandboxIncidentApi(id: string): Promise<{ success: boolean; id: string }> {
+  return fetchJson<{ success: boolean; id: string }>(`/sandbox/incidents/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function createAndAnalyzeSandboxIncidentApi(
+  input: CreateSandboxIncidentInput
+): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>("/demo/incidents/create-and-analyze", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function simulateSandboxIncidentApi(params: {
+  incidentId: string;
+  actionType: string;
+  strategyName?: string;
+  recoveryProbability?: number;
+  amount: number;
+}): Promise<SandboxSimulationResult> {
+  return fetchJson<SandboxSimulationResult>("/demo/incidents/simulate", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+// Recovery Demo Experience (9 Scenarios with Gemini AI & Supabase Data - Legacy compatibility)
 export async function fetchDemoScenariosApi(): Promise<DemoScenarioItem[]> {
   return fetchJson<DemoScenarioItem[]>("/demo/scenarios");
+}
+
+export async function fetchDemoScenarioContextApi(
+  scenarioKey: string
+): Promise<{ scenario: DemoScenarioItem; customer: any; context: any }> {
+  return fetchJson<{ scenario: DemoScenarioItem; customer: any; context: any }>(
+    `/demo/scenarios/${scenarioKey}`
+  );
 }
 
 export async function analyzeDemoScenarioApi(

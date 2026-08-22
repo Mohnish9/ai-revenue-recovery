@@ -10,14 +10,19 @@ import {
 import { requireAuth } from "../middleware/authMiddleware.js";
 import {
   analyzeCaseAIController,
-  analyzeDemoScenarioController,
+  analyzeSandboxIncidentController,
   chatAIController,
+  createAndAnalyzeSandboxIncidentController,
+  createSandboxIncidentController,
   createPromiseController,
+  deleteSandboxIncidentController,
   executeActionController,
+  executeSandboxIncidentActionController,
   getCustomerController,
   getCustomerOperationsController,
   getInvoiceController,
   getRecoveryCaseController,
+  getSandboxIncidentController,
   getTransactionController,
   listActionsController,
   listAllAgentLogsController,
@@ -30,8 +35,11 @@ import {
   listPaymentEventsController,
   listPromisesController,
   listRecoveryCasesController,
+  listSandboxIncidentsController,
+  listScenarioTypesController,
   listSubscriptionsController,
   listTransactionsController,
+  simulateSandboxIncidentController,
   simulateScenarioController,
   updateCaseStatusController,
 } from "../controllers/operationsController.js";
@@ -93,9 +101,19 @@ apiRoutes.get("/agent-logs", listAllAgentLogsController);
 apiRoutes.post("/ai/analyze-case/:id", analyzeCaseAIController);
 apiRoutes.post("/ai/chat", chatAIController);
 
-// Recovery Demo Experience (9 Scenarios with Gemini AI & Supabase Data)
+// Dynamic Sandbox Incidents REST API
+apiRoutes.get("/sandbox/incidents", listSandboxIncidentsController);
+apiRoutes.post("/sandbox/incidents", createSandboxIncidentController);
+apiRoutes.get("/sandbox/incidents/:id", getSandboxIncidentController);
+apiRoutes.post("/sandbox/incidents/:id/analyze", analyzeSandboxIncidentController);
+apiRoutes.post("/sandbox/incidents/:id/actions", executeSandboxIncidentActionController);
+apiRoutes.delete("/sandbox/incidents/:id", deleteSandboxIncidentController);
+
+// Recovery Demo Scenario Types & Sandbox Fast-Path Actions
+apiRoutes.get("/demo/scenario-types", listScenarioTypesController);
+apiRoutes.post("/demo/incidents/create-and-analyze", createAndAnalyzeSandboxIncidentController);
+apiRoutes.post("/demo/incidents/simulate", simulateSandboxIncidentController);
 apiRoutes.get("/demo/scenarios", listDemoScenariosController);
-apiRoutes.post("/demo/scenarios/:key/analyze", analyzeDemoScenarioController);
 
 // Scenario Simulation Engine (Sandbox simulation)
 apiRoutes.post("/scenarios/simulate", simulateScenarioController);
