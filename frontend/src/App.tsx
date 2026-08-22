@@ -1,36 +1,220 @@
-import { useEffect, useMemo, useState } from "react";
-import type { PageKey } from "./lib/types";
-import { fetchDashboardSummary, fetchHealth } from "./lib/api";
-import type { DashboardSummary } from "./lib/types";
+import { useState, useEffect } from "react";
+import type { PageKey, DashboardSummary } from "./lib/types";
+import { fetchDashboardSummary } from "./lib/api";
 import { navItems } from "./components/Sidebar";
 import { AppLayout } from "./layouts/AppLayout";
+import { AuthProvider, useAuth } from "./lib/authContext";
+import { LoginPage } from "./pages/LoginPage";
+
+// Modals & Drawers
+import { CaseDetailDrawer } from "./components/CaseDetailDrawer";
+import { CustomerDetailDrawer } from "./components/CustomerDetailDrawer";
+
+// Functional Operational Pages
 import { Dashboard } from "./pages/Dashboard";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { RecoveryCasesPage } from "./pages/RecoveryCasesPage";
+import { FailedPaymentsPage } from "./pages/FailedPaymentsPage";
+import { TransactionsPage } from "./pages/TransactionsPage";
+import { InvoicesPage } from "./pages/InvoicesPage";
+import { SubscriptionsPage } from "./pages/SubscriptionsPage";
+import { CheckoutDropoffsPage } from "./pages/CheckoutDropoffsPage";
+import { MandatesPage } from "./pages/MandatesPage";
+import { CustomersPage } from "./pages/CustomersPage";
+import { PolicyRulesPage } from "./pages/PolicyRulesPage";
+import { SystemHealthPage } from "./pages/SystemHealthPage";
+import { AIAgentPage } from "./pages/AIAgentPage";
+import { ScenarioCenterPage } from "./pages/ScenarioCenterPage";
+import { RecoveryDemoPage } from "./pages/RecoveryDemoPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { AuditLogsPage } from "./pages/AuditLogsPage";
 
 function getInitialPage(): PageKey {
-  const value = window.location.pathname.slice(1) as PageKey;
-  return navItems.some((item) => item.key === value) ? value : "dashboard";
+  const path = window.location.pathname.replace(/^\/+/, "") as PageKey;
+  return navItems.some((item) => item.key === path) ? path : "dashboard";
 }
 
-export default function App() {
+function AuthenticatedApp() {
+  const { user, loading } = useAuth();
   const [page, setPage] = useState<PageKey>(getInitialPage);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [apiReady, setApiReady] = useState(false);
-  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>();
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Active drawers
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+
+  const loadSummary = async () => {
+    if (!user) return;
+    try {
+      setRefreshing(true);
+      const res = await fetchDashboardSummary();
+      setSummary(res);
+    } catch (e) {
+      console.error("Dashboard summary fetch failed", e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    fetchHealth().then(() => setApiReady(true)).catch(() => setApiReady(false));
-    fetchDashboardSummary().then(setDashboardSummary).catch(() => setDashboardSummary(undefined));
+    if (user) {
+      loadSummary();
+    }
+  }, [user, refreshKey]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setPage(getInitialPage());
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const activeItem = useMemo(() => navItems.find((item) => item.key === page)!, [page]);
+  useEffect(() => {
+    if (!loading) {
+      if (!user && window.location.pathname !== "/login") {
+        window.history.replaceState({}, "", "/login");
+      }
+    }
+  }, [user, loading]);
+
   const navigate = (nextPage: PageKey) => {
     setPage(nextPage);
     window.history.pushState({}, "", nextPage === "dashboard" ? "/" : `/${nextPage}`);
     setMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  return <AppLayout page={page} menuOpen={menuOpen} onNavigate={navigate} onOpenMenu={() => setMenuOpen(true)} onCloseMenu={() => setMenuOpen(false)}>
-    {page === "dashboard" ? <Dashboard apiReady={apiReady} summary={dashboardSummary} navigate={navigate} /> : <PlaceholderPage page={page} />}
-  </AppLayout>;
+  const handleGlobalRefresh = () => {
+    setRefreshKey((k) => k + 1);
+  };
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#081016",
+          color: "#94a3b8",
+          fontFamily: "var(--font-sans)",
+          gap: "12px",
+        }}
+      >
+        <div style={{ width: "32px", height: "32px", border: "2px solid #1e3342", borderTopColor: "#d8ee9b", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+        <span style={{ fontSize: "12px", letterSpacing: "0.5px" }}>Verifying Supabase authentication session...</span>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
+  return (
+    <AppLayout
+      page={page}
+      menuOpen={menuOpen}
+      onNavigate={navigate}
+      onOpenMenu={() => setMenuOpen(true)}
+      onCloseMenu={() => setMenuOpen(false)}
+      onRefresh={handleGlobalRefresh}
+      refreshing={refreshing}
+      openCasesCount={summary?.openRecoveryCases || 0}
+    >
+      <div key={`${page}-${refreshKey}`}>
+        {page === "dashboard" && (
+          <Dashboard
+            onNavigate={navigate}
+            onSelectCase={(id) => setSelectedCaseId(id)}
+          />
+        )}
+        {page === "recovery" && (
+          <RecoveryCasesPage
+            onSelectCase={(id) => setSelectedCaseId(id)}
+          />
+        )}
+        {page === "failed-payments" && (
+          <FailedPaymentsPage
+            onSelectCase={(id) => setSelectedCaseId(id)}
+          />
+        )}
+        {page === "transactions" && (
+          <TransactionsPage
+            onSelectCustomer={(id) => setSelectedCustomerId(id)}
+          />
+        )}
+        {page === "invoices" && (
+          <InvoicesPage
+            onSelectCustomer={(id) => setSelectedCustomerId(id)}
+          />
+        )}
+        {page === "subscriptions" && (
+          <SubscriptionsPage />
+        )}
+        {page === "checkout-dropoffs" && (
+          <CheckoutDropoffsPage />
+        )}
+        {page === "mandates" && (
+          <MandatesPage />
+        )}
+        {page === "customers" && (
+          <CustomersPage
+            onSelectCustomer={(id) => setSelectedCustomerId(id)}
+          />
+        )}
+        {page === "policy-rules" && (
+          <PolicyRulesPage />
+        )}
+        {page === "health" && (
+          <SystemHealthPage />
+        )}
+        {page === "agent" && (
+          <AIAgentPage />
+        )}
+        {page === "scenarios" && (
+          <ScenarioCenterPage />
+        )}
+        {page === "recovery-demo" && (
+          <RecoveryDemoPage />
+        )}
+        {page === "analytics" && (
+          <AnalyticsPage />
+        )}
+        {page === "audit" && (
+          <AuditLogsPage />
+        )}
+      </div>
+
+      {/* Case 360 Detail Drawer */}
+      {selectedCaseId && (
+        <CaseDetailDrawer
+          caseId={selectedCaseId}
+          onClose={() => setSelectedCaseId(null)}
+          onUpdated={handleGlobalRefresh}
+        />
+      )}
+
+      {/* Customer 360 Detail Drawer */}
+      {selectedCustomerId && (
+        <CustomerDetailDrawer
+          customerId={selectedCustomerId}
+          onClose={() => setSelectedCustomerId(null)}
+        />
+      )}
+    </AppLayout>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthenticatedApp />
+    </AuthProvider>
+  );
 }

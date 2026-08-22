@@ -1,0 +1,32 @@
+{
+  "name": "ai-revenue-recovery",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx backend/src/server.ts",
+    "build": "vite build frontend && tsc --noEmit -p backend/tsconfig.json && tsc --noEmit -p frontend/tsconfig.json",
+    "lint": "tsc --noEmit -p backend/tsconfig.json && tsc --noEmit -p frontend/tsconfig.json",
+    "start": "NODE_ENV=production tsx backend/src/server.ts",
+    "db:verify": "tsx backend/src/scripts/verifyDatabase.ts",
+    "db:seed": "tsx backend/src/scripts/seedDatabase.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.18.0",
+    "@supabase/supabase-js": "^2.57.0",
+    "express": "^4.22.2",
+    "lucide-react": "^1.33.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3"
+  }
+}

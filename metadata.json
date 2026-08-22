@@ -1,0 +1,6 @@
+{
+  "name": "Recoverly",
+  "description": "AI revenue recovery and payment operations platform.",
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

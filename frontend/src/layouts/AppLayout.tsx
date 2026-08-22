@@ -8,14 +8,41 @@ interface AppLayoutProps {
   onNavigate: (page: PageKey) => void;
   onOpenMenu: () => void;
   onCloseMenu: () => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+  openCasesCount?: number;
   children: React.ReactNode;
 }
 
-export function AppLayout({ page, menuOpen, onNavigate, onOpenMenu, onCloseMenu, children }: AppLayoutProps) {
-  const label = page === "dashboard" ? "Overview" : page.replace("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-  return <div className="app-shell">
-    <Sidebar page={page} menuOpen={menuOpen} onNavigate={onNavigate} />
-    {menuOpen && <button className="scrim" aria-label="Close navigation" onClick={onCloseMenu} />}
-    <main className="main-content"><Topbar label={label} onOpenMenu={onOpenMenu} />{children}</main>
-  </div>;
+export function AppLayout({
+  page,
+  menuOpen,
+  onNavigate,
+  onOpenMenu,
+  onCloseMenu,
+  onRefresh,
+  refreshing,
+  openCasesCount = 0,
+  children,
+}: AppLayoutProps) {
+  return (
+    <div className="app-shell">
+      <Sidebar
+        page={page}
+        menuOpen={menuOpen}
+        onNavigate={onNavigate}
+        openCasesCount={openCasesCount}
+      />
+      {menuOpen && <button className="scrim" aria-label="Close navigation" onClick={onCloseMenu} />}
+      <main className="main-content">
+        <Topbar
+          page={page}
+          onToggleMenu={menuOpen ? onCloseMenu : onOpenMenu}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+        />
+        {children}
+      </main>
+    </div>
+  );
 }
