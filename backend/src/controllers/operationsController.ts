@@ -37,6 +37,10 @@ import {
   escalateSandboxIncidentToHuman,
   executeAutonomousLoopStep,
   runFullAutonomousLoop,
+  markSandboxIncidentPaid,
+  customerResolveIncident,
+  triggerScheduledAttemptNow,
+  cancelScheduledRecovery,
   simulateRecoveryScenario,
   simulateSandboxIncident,
   updateCaseStatus,
@@ -497,6 +501,76 @@ export async function runFullAutonomousLoopController(request: Request, response
       policyConfig,
       operatorInstruction,
     });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function markSandboxIncidentPaidController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { operatorName } = request.body || {};
+    const result = markSandboxIncidentPaid(id, operatorName);
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function customerResolveIncidentController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { method, notes } = request.body || {};
+    const result = customerResolveIncident(id, { method, notes });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function getPublicSandboxIncidentController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const item = await getSandboxIncident(id);
+    if (!item) {
+      return response.status(404).json({ error: `Incident ${id} not found` });
+    }
+    const rec = (item as any).record || item.incident;
+    return response.json({
+      id: item.incident.id,
+      customerName: item.customer.name,
+      customerEmail: item.customer.email,
+      scenarioTypeName: item.incident.scenarioTypeName,
+      amount: item.incident.amount,
+      currency: item.incident.currency,
+      paymentMethod: item.incident.paymentMethod,
+      failureReason: item.incident.failureCode,
+      status: item.incident.status,
+      isResolved: item.incident.status === "RECOVERED" || item.incident.status === "RESOLVED",
+      recoveredAmount: rec?.recoveryDossier?.recoveredAmount || item.incident.amount,
+      settledTimestamp: rec?.recoveryDossier?.settledTimestamp || null,
+    });
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function triggerScheduledAttemptNowController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const result = await triggerScheduledAttemptNow(id);
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function cancelScheduledRecoveryController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { reason } = request.body || {};
+    const result = cancelScheduledRecovery(id, reason);
     response.json(result);
   } catch (error) {
     sendError(response, error);

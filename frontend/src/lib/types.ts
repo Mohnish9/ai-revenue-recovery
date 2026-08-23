@@ -66,10 +66,10 @@ export interface Customer {
   id: string;
   name: string;
   email: string;
-  phone: string | null;
-  customer_type: "INDIVIDUAL" | "BUSINESS";
+  phone?: string | null;
+  customer_type: "INDIVIDUAL" | "BUSINESS" | "ENTERPRISE" | string;
   created_at: string;
-  updated_at: string;
+  updated_at?: string;
 }
 
 export interface Transaction {
@@ -402,12 +402,15 @@ export interface CreateSandboxIncidentInput {
   customerCustom?: {
     name: string;
     email: string;
+    phone?: string;
     customer_type?: string;
   };
   amount: number;
   currency?: string;
   paymentMethod?: string;
+  paymentRail?: string;
   failureCode?: string;
+  failureReason?: string;
   severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   billingContext?: string;
   customInstruction?: string;
@@ -452,9 +455,51 @@ export interface StructuredAIAnalysis {
   unavailable?: boolean;
 }
 
+export interface OutboundDeliveryResult {
+  channel: "WHATSAPP" | "SMS" | "EMAIL";
+  provider: "TWILIO" | "RESEND" | "SIMULATION_ENGINE";
+  status: "DELIVERED" | "SENT" | "SIMULATED" | "FAILED";
+  deliveryLabel: string;
+  isRealDispatch: boolean;
+  to: string;
+  recipientName: string;
+  messagePreview: string;
+  providerMessageId?: string;
+  deliveredAt: string;
+  error?: string;
+}
+
+export interface StoredIncidentScheduler {
+  nextAttemptNumber: number;
+  nextAttemptAt: string | null;
+  status: "SCHEDULED" | "RUNNING" | "COMPLETED" | "CANCELLED" | "ESCALATED";
+  scheduledIntervalSec?: number;
+}
+
+export interface StoredTimelineEvent {
+  id: string;
+  timestamp: string;
+  type:
+    | "DETECT"
+    | "ANALYZE"
+    | "DECIDE"
+    | "ATTEMPT"
+    | "TIMER_SCHEDULED"
+    | "REASSESS"
+    | "RECOVERED"
+    | "ESCALATED";
+  title: string;
+  description: string;
+  status: "COMPLETED" | "ACTIVE" | "PENDING" | "FAILED";
+  attemptNumber?: number;
+  channelDispatches?: OutboundDeliveryResult[];
+  details?: any;
+}
+
 export interface SandboxActionRecord {
   id: string;
   incidentId: string;
+  attemptNumber?: number;
   actionType: string;
   actionTitle: string;
   status: string;
@@ -464,6 +509,7 @@ export interface SandboxActionRecord {
   operatorName?: string;
   reason?: string;
   executedAt: string;
+  channelDispatches?: OutboundDeliveryResult[];
   details?: string;
 }
 
@@ -477,6 +523,7 @@ export interface SandboxIncident {
   customer_id: string;
   customer_name: string;
   customer_email: string;
+  customer_phone?: string;
   customer_type: "INDIVIDUAL" | "BUSINESS" | "ENTERPRISE" | string;
   amount: number;
   currency: string;
@@ -486,10 +533,25 @@ export interface SandboxIncident {
   billing_context: string;
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-  status: "OPEN" | "ANALYZED" | "ACTION_SIMULATED" | "ACTION_DISPATCHED" | "RECOVERED" | "ESCALATED" | "CLOSED";
+  status:
+    | "OPEN"
+    | "ACTIVE"
+    | "ANALYZED"
+    | "ACTION_SIMULATED"
+    | "ACTION_DISPATCHED"
+    | "RECOVERED"
+    | "ESCALATED"
+    | "ESCALATED_TO_HUMAN"
+    | "RESOLVED"
+    | "CLOSED"
+    | "CANCELLED";
+  scheduler?: StoredIncidentScheduler;
+  timeline?: StoredTimelineEvent[];
   analysis: StructuredAIAnalysis | null;
   lifecycle: SandboxAgentLifecycleStep[];
   actions: SandboxActionRecord[];
+  escalationDossier?: any;
+  recoveryDossier?: any;
   customer_context?: {
     transactionsCount: number;
     invoicesCount: number;
@@ -531,7 +593,7 @@ export interface SandboxIncidentPayload {
   scenarioTypeKey: string;
   scenarioTypeName: string;
   tag: string;
-  category: "CARD" | "UPI" | "INVOICE" | "SUBSCRIPTION" | "CHECKOUT" | "CHURN";
+  category: "CARD" | "UPI" | "INVOICE" | "SUBSCRIPTION" | "CHECKOUT" | "CHURN" | string;
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   amount: number;
   currency: string;
@@ -539,7 +601,12 @@ export interface SandboxIncidentPayload {
   failureCode: string;
   billingContext: string;
   description?: string;
+  customer_phone?: string;
+  scheduler?: StoredIncidentScheduler;
+  nextAttemptAt?: string | null;
+  nextAttemptNumber?: number | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface SandboxIncidentAnalysis extends StructuredAIAnalysis {
@@ -558,7 +625,7 @@ export interface SandboxAgentLifecycleStep {
 
 export interface SandboxIncidentResponse {
   incident: SandboxIncidentPayload;
-  customer: Customer | { id: string; name: string; email: string; customer_type: string; created_at?: string };
+  customer: Customer | { id: string; name: string; email: string; phone?: string | null; customer_type: string; created_at?: string };
   context: {
     transactionsCount: number;
     invoicesCount: number;
@@ -572,6 +639,16 @@ export interface SandboxIncidentResponse {
   analysis: StructuredAIAnalysis;
   lifecycle: SandboxAgentLifecycleStep[];
   actions?: SandboxActionRecord[];
+  timeline?: StoredTimelineEvent[];
+  scheduler?: StoredIncidentScheduler;
+  scheduledRecovery?: {
+    attemptNumber: number;
+    scheduledFor: string;
+    intervalSec: number;
+    status: string;
+  };
+  escalationDossier?: any;
+  recoveryDossier?: any;
   record?: SandboxIncident;
   auditLog?: any[];
   simulation?: any;

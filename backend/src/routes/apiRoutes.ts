@@ -43,6 +43,11 @@ import {
   listTransactionsController,
   reassessSandboxIncidentController,
   runFullAutonomousLoopController,
+  markSandboxIncidentPaidController,
+  customerResolveIncidentController,
+  getPublicSandboxIncidentController,
+  triggerScheduledAttemptNowController,
+  cancelScheduledRecoveryController,
   simulateSandboxIncidentController,
   simulateScenarioController,
   updateCaseStatusController,
@@ -52,6 +57,11 @@ export const apiRoutes = Router();
 
 // Public Health & System Probes
 apiRoutes.get("/health", getHealth);
+
+// Public Customer Self-Service Payment & Incident Resolution Endpoints (No Auth Required)
+apiRoutes.get("/sandbox/incidents/:id/public", getPublicSandboxIncidentController);
+apiRoutes.post("/sandbox/incidents/:id/resolve", customerResolveIncidentController);
+apiRoutes.post("/sandbox/incidents/:id/customer-resolve", customerResolveIncidentController);
 
 // Public Auth Endpoints
 apiRoutes.post("/auth/login", loginController);
@@ -115,6 +125,11 @@ apiRoutes.post("/sandbox/incidents/:id/reassess", reassessSandboxIncidentControl
 apiRoutes.post("/sandbox/incidents/:id/escalate", escalateSandboxIncidentController);
 apiRoutes.post("/sandbox/incidents/:id/autonomous-step", executeAutonomousStepController);
 apiRoutes.post("/sandbox/incidents/:id/run-loop", runFullAutonomousLoopController);
+apiRoutes.post("/sandbox/incidents/:id/mark-paid", markSandboxIncidentPaidController);
+apiRoutes.post("/sandbox/incidents/:id/customer-resolve", customerResolveIncidentController);
+apiRoutes.post("/sandbox/incidents/:id/resolve", customerResolveIncidentController);
+apiRoutes.post("/sandbox/incidents/:id/trigger-now", triggerScheduledAttemptNowController);
+apiRoutes.post("/sandbox/incidents/:id/cancel", cancelScheduledRecoveryController);
 apiRoutes.delete("/sandbox/incidents/:id", deleteSandboxIncidentController);
 
 // Recovery Demo Scenario Types & Sandbox Fast-Path Actions

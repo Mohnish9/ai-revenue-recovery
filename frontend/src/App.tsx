@@ -27,6 +27,17 @@ import { ScenarioCenterPage } from "./pages/ScenarioCenterPage";
 import { RecoveryDemoPage } from "./pages/RecoveryDemoPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
+import { CustomerResolvePage } from "./pages/CustomerResolvePage";
+
+function getResolveIncidentId(): string | null {
+  const pathname = window.location.pathname;
+  const match = pathname.match(/^\/(?:resolve|pay|intent)\/([a-zA-Z0-9_-]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  const searchParams = new URLSearchParams(window.location.search);
+  return searchParams.get("resolve") || searchParams.get("incidentId") || null;
+}
 
 function getInitialPage(): PageKey {
   const path = window.location.pathname.replace(/^\/+/, "") as PageKey;
@@ -215,6 +226,11 @@ function AuthenticatedApp() {
 }
 
 export default function App() {
+  const resolveId = getResolveIncidentId();
+  if (resolveId) {
+    return <CustomerResolvePage incidentId={resolveId} />;
+  }
+
   return (
     <AuthProvider>
       <AuthenticatedApp />

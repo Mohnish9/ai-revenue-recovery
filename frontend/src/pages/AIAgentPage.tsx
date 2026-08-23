@@ -21,7 +21,10 @@ import {
   executeAutonomousStepApi,
   runFullAutonomousLoopApi,
   escalateSandboxIncidentApi,
+  triggerScheduledAttemptNowApi,
+  cancelScheduledRecoveryApi,
 } from "../lib/api";
+import { CustomerPaymentModal } from "../components/CustomerPaymentModal";
 
 type AgentWorkflowStep = "DETECT" | "ANALYZE" | "DECIDE" | "ACT_SIMULATE" | "OBSERVE" | "AUDIT";
 
@@ -63,6 +66,41 @@ export function AIAgentPage({ onNavigate, onSelectCustomer }: AIAgentPageProps) 
   // Terminal Dossiers
   const [escalationDossier, setEscalationDossier] = useState<HumanEscalationDossier | null>(null);
   const [recoveryDossier, setRecoveryDossier] = useState<RecoveryDossier | null>(null);
+  const [resolvingIncident, setResolvingIncident] = useState<SandboxIncidentResponse | null>(null);
+  const [triggeringNowId, setTriggeringNowId] = useState<string | null>(null);
+
+  // Check if current target is sandbox
+  const isSandboxTarget =
+    selectedCaseId.startsWith("SB-") ||
+    selectedCaseId.startsWith("sb_") ||
+    selectedCaseId.startsWith("inc_") ||
+    sandboxIncidents.some((s) => s.incident.id === selectedCaseId);
+
+  // Live timer tick for real-time countdown updates
+  const [, setTick] = useState<number>(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTick(Date.now());
+    }, 1000);
+
+    // Refresh active sandbox incident periodically to sync background AI runs
+    const poller = setInterval(async () => {
+      if (selectedCaseId && isSandboxTarget) {
+        try {
+          const updated = await fetchSandboxIncidentApi(selectedCaseId);
+          setSandboxDetail(updated);
+        } catch (e) {
+          // non-blocking
+        }
+      }
+    }, 4000);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(poller);
+    };
+  }, [selectedCaseId, isSandboxTarget]);
 
   // Operator prompt guidance & policy config
   const [customInstruction, setCustomInstruction] = useState("");
@@ -100,13 +138,6 @@ export function AIAgentPage({ onNavigate, onSelectCustomer }: AIAgentPageProps) 
     },
   ]);
   const [chatLoading, setChatLoading] = useState(false);
-
-  // Check if current target is sandbox
-  const isSandboxTarget =
-    selectedCaseId.startsWith("SB-") ||
-    selectedCaseId.startsWith("sb_") ||
-    selectedCaseId.startsWith("inc_") ||
-    sandboxIncidents.some((s) => s.incident.id === selectedCaseId);
 
   // Load cases and sandbox queue
   const loadCasesList = async () => {
@@ -740,17 +771,17 @@ export function AIAgentPage({ onNavigate, onSelectCustomer }: AIAgentPageProps) 
         })}
       </div>
 
-      {/* ONE-TIME HUMAN APPROVAL BANNER (When ready to start) */}
-      {isSandboxTarget && autonomyStatus === "IDLE_READY" && currentCase && (
+      {/* LIVE AUTONOMOUS CADENCE & COUNTDOWN BANNER */}
+      {isSandboxTarget && sandboxDetail && autonomyStatus !== "RECOVERED" && autonomyStatus !== "ESCALATED_TO_HUMAN" && (
         <div
           style={{
             background: "linear-gradient(135deg, #0d1e2a 0%, #152b3c 100%)",
-            border: "2px solid #22c55e",
+            border: "2px solid #4f46e5",
             borderRadius: "12px",
             padding: "22px 24px",
             marginBottom: "20px",
             color: "#f8fafc",
-            boxShadow: "0 10px 25px -5px rgba(34, 197, 94, 0.15)",
+            boxShadow: "0 10px 25px -5px rgba(79, 70, 229, 0.25)",
           }}
         >
           <div
@@ -766,8 +797,8 @@ export function AIAgentPage({ onNavigate, onSelectCustomer }: AIAgentPageProps) 
               <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
                 <span
                   style={{
-                    background: "#22c55e",
-                    color: "#052e16",
+                    background: "#4f46e5",
+                    color: "#ffffff",
                     fontWeight: 800,
                     padding: "3px 8px",
                     borderRadius: "4px",
@@ -775,77 +806,161 @@ export function AIAgentPage({ onNavigate, onSelectCustomer }: AIAgentPageProps) 
                     letterSpacing: "0.5px",
                   }}
                 >
-                  AUTONOMOUS RECOVERY READY
+                  ⚡ AUTONOMOUS CADENCE ACTIVE
                 </span>
                 <span style={{ fontSize: "12px", color: "#94a3b8" }}>
-                  One-time human authorization required to engage closed loop
+                  Autonomous workflow running on live T+2m / T+5m / T+5m cadence
                 </span>
               </div>
-              <h2 style={{ fontSize: "20px", margin: "4px 0 8px", color: "#ffffff", fontWeight: 700 }}>
-                Ready to Authorize Autonomous Recovery Loop
-              </h2>
-              <p style={{ fontSize: "13px", color: "#cbd5e1", lineHeight: "20px", margin: "0 0 14px" }}>
-                The operator gives approval <strong>only once</strong>. After launch, the AI agent
-                will autonomously diagnose, select optimal channels (WhatsApp UPI, SMS link, network retry),
-                observe telemetry feedback, and continue until full recovery or safe human escalation handoff.
-              </p>
 
-              {/* Scope & Bounds Checklist */}
+              {(() => {
+                const targetTime = sandboxDetail.scheduledRecovery?.scheduledFor
+                  ? new Date(sandboxDetail.scheduledRecovery.scheduledFor).getTime()
+                  : sandboxDetail.scheduler?.nextAttemptAt
+                  ? new Date(sandboxDetail.scheduler.nextAttemptAt).getTime()
+                  : (sandboxDetail as any).scheduledRecovery?.targetExecutionTime || 0;
+                const schedStatus = sandboxDetail.scheduledRecovery?.status || sandboxDetail.scheduler?.status || "SCHEDULED";
+                const nextAttemptNum = sandboxDetail.scheduledRecovery?.attemptNumber || sandboxDetail.scheduler?.nextAttemptNumber || 1;
+                const hasTimer = Boolean(targetTime && schedStatus === "SCHEDULED");
+
+                if (hasTimer) {
+                  const diff = targetTime - Date.now();
+                  const timerStr = (() => {
+                    if (diff <= 0) return "00:00 (Executing...)";
+                    const mins = Math.floor(diff / 60000);
+                    const secs = Math.floor((diff % 60000) / 1000);
+                    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+                  })();
+
+                  return (
+                    <div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: "12px", marginTop: "6px" }}>
+                        <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase" }}>
+                          NEXT RECOVERY ACTION:
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "26px",
+                            fontWeight: 900,
+                            fontFamily: "DM Mono",
+                            color: "#d6f36b",
+                            letterSpacing: "-0.5px",
+                          }}
+                        >
+                          ⏱ {timerStr}
+                        </div>
+                        <span className="status-pill purple" style={{ fontSize: "10px" }}>
+                          Attempt {nextAttemptNum} of 3
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: "13px", color: "#cbd5e1", marginTop: "6px" }}>
+                        <strong>Selected Strategy:</strong> {sandboxDetail.analysis?.selectedStrategy || "Autonomous Multi-Rail Outreach"}
+                      </div>
+                      <div style={{ fontSize: "11.5px", color: "#94a3b8", marginTop: "2px" }}>
+                        <strong>Channel:</strong> WhatsApp / SMS / Email • {sandboxDetail.analysis?.strategyJustification || "Autonomous closed loop evaluating telemetry"}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div>
+                    <h2 style={{ fontSize: "18px", margin: "4px 0", color: "#ffffff", fontWeight: 700 }}>
+                      Status: {sandboxDetail.incident.status || "ACTIVE"}
+                    </h2>
+                    <p style={{ fontSize: "13px", color: "#cbd5e1", margin: 0 }}>
+                      {sandboxDetail.analysis?.strategyJustification || sandboxDetail.analysis?.aiReasoning || "AI analyzing incoming telemetry and executing bounded actions."}
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {/* Scope & Contact Checklist */}
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
                   gap: "10px",
                   background: "rgba(0,0,0,0.25)",
                   padding: "12px 14px",
                   borderRadius: "8px",
                   fontSize: "12px",
+                  marginTop: "12px",
                 }}
               >
                 <div>
                   <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Target Customer:</span>
-                  <strong>{currentCase.customers?.name}</strong>
+                  <strong>{sandboxDetail.customer.name}</strong>
+                  {((sandboxDetail.customer as any).phone || sandboxDetail.incident.customer_phone) && (
+                    <div style={{ fontSize: "11px", color: "#38bdf8" }}>📱 {(sandboxDetail.customer as any).phone || sandboxDetail.incident.customer_phone}</div>
+                  )}
                 </div>
                 <div>
                   <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Amount At Risk:</span>
                   <strong style={{ color: "#d6f36b" }}>
-                    {currentCase.currency || "₹"}{Number(currentCase.amount_at_risk).toLocaleString()}
+                    {sandboxDetail.incident.currency} {Number(sandboxDetail.incident.amount).toLocaleString()}
                   </strong>
                 </div>
                 <div>
-                  <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Safety Limits:</span>
-                  <strong>Bounded Max {maxAttempts} Attempts</strong>
+                  <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Disruption Code:</span>
+                  <strong style={{ color: "#f87171", fontFamily: "DM Mono" }}>{sandboxDetail.incident.failureCode}</strong>
                 </div>
                 <div>
-                  <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Multi-Channel Rails:</span>
-                  <strong style={{ color: "#38bdf8" }}>WhatsApp, SMS, Gateway, Mandate</strong>
+                  <span style={{ color: "#94a3b8", display: "block", fontSize: "10px" }}>Safety Cadence:</span>
+                  <strong style={{ color: "#38bdf8" }}>Max 3 Bounded Attempts</strong>
                 </div>
               </div>
             </div>
 
-            {/* Big Action Buttons */}
+            {/* Action Buttons */}
             <div style={{ display: "flex", flexDirection: "column", gap: "10px", minWidth: "220px" }}>
               <button
-                className="primary-button"
+                className="btn btn-primary"
                 style={{
-                  background: "#22c55e",
-                  color: "#052e16",
+                  background: "#4f46e5",
+                  color: "#ffffff",
                   fontWeight: 800,
-                  fontSize: "14px",
-                  padding: "14px 20px",
+                  fontSize: "13px",
+                  padding: "12px 16px",
                   borderRadius: "8px",
                   border: "none",
-                  boxShadow: "0 4px 14px rgba(34, 197, 94, 0.4)",
+                  boxShadow: "0 4px 14px rgba(79, 70, 229, 0.4)",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "8px",
                 }}
-                onClick={handleStartAutonomousRecovery}
+                onClick={() => setResolvingIncident(sandboxDetail)}
               >
-                <span>🟢</span>
-                <span>START AUTONOMOUS RECOVERY</span>
+                <span>🔗</span>
+                <span>Customer Recovery Link</span>
+              </button>
+
+              <button
+                className="btn btn-secondary"
+                style={{
+                  fontSize: "12px",
+                  padding: "8px 12px",
+                  background: "#1e293b",
+                  color: "#f8fafc",
+                  borderColor: "#334155",
+                }}
+                disabled={triggeringNowId === sandboxDetail.incident.id}
+                onClick={async () => {
+                  try {
+                    setTriggeringNowId(sandboxDetail.incident.id);
+                    const updated = await triggerScheduledAttemptNowApi(sandboxDetail.incident.id);
+                    setSandboxDetail(updated);
+                  } catch (e: any) {
+                    alert(`Trigger error: ${e.message}`);
+                  } finally {
+                    setTriggeringNowId(null);
+                  }
+                }}
+              >
+                {triggeringNowId === sandboxDetail.incident.id ? "Executing Attempt..." : "⚡ Trigger Attempt Now"}
               </button>
 
               <div style={{ display: "flex", gap: "6px" }}>
@@ -860,7 +975,7 @@ export function AIAgentPage({ onNavigate, onSelectCustomer }: AIAgentPageProps) 
                   }}
                   onClick={handleRunFullLoopInstant}
                 >
-                  ⚡ Fast-Run (Instant)
+                  ⚡ Fast-Run (All 3)
                 </button>
                 <button
                   className="outline-button"
@@ -1664,6 +1779,19 @@ export function AIAgentPage({ onNavigate, onSelectCustomer }: AIAgentPageProps) 
             </div>
           </div>
         </div>
+      )}
+      {/* Customer Self-Serve Resolution Modal */}
+      {resolvingIncident && (
+        <CustomerPaymentModal
+          incident={resolvingIncident}
+          onClose={() => setResolvingIncident(null)}
+          onResolved={(updated) => {
+            setSandboxDetail(updated);
+            if (updated.incident.status === "RECOVERED") {
+              setAutonomyStatus("RECOVERED");
+            }
+          }}
+        />
       )}
     </div>
   );

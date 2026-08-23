@@ -384,6 +384,40 @@ export async function runFullAutonomousLoopApi(
   );
 }
 
+export async function markSandboxIncidentPaidApi(
+  id: string,
+  operatorName = "Operations Specialist"
+): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>(`/sandbox/incidents/${id}/mark-paid`, {
+    method: "POST",
+    body: JSON.stringify({ operatorName }),
+  });
+}
+
+export async function customerResolveSandboxIncidentApi(
+  id: string,
+  paymentDetails?: { method?: string; notes?: string }
+): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>(`/sandbox/incidents/${id}/customer-resolve`, {
+    method: "POST",
+    body: JSON.stringify(paymentDetails || {}),
+  });
+}
+
+export async function triggerScheduledAttemptNowApi(id: string): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>(`/sandbox/incidents/${id}/trigger-now`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function cancelScheduledRecoveryApi(id: string, reason?: string): Promise<SandboxIncidentResponse> {
+  return fetchJson<SandboxIncidentResponse>(`/sandbox/incidents/${id}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export async function deleteSandboxIncidentApi(id: string): Promise<{ success: boolean; id: string }> {
   return fetchJson<{ success: boolean; id: string }>(`/sandbox/incidents/${id}`, {
     method: "DELETE",

@@ -1,5 +1,11 @@
 import { getSupabaseClient } from "./supabaseService.js";
 import { GoogleGenAI } from "@google/genai";
+import {
+  OutboundDeliveryResult,
+  sendWhatsAppMessage,
+  sendSmsMessage,
+  sendEmailMessage,
+} from "./messagingService.js";
 
 const defaultLimit = 50;
 const maxLimit = 200;
@@ -52,7 +58,7 @@ export async function listCustomers(limit: number, search?: string) {
         id: sb.customer_id,
         name: sb.customer_name,
         email: sb.customer_email,
-        phone: "+91 98000 00000",
+        phone: sb.customer_phone || "",
         customer_type: sb.customer_type || "INDIVIDUAL",
         created_at: sb.created_at,
         updated_at: sb.updated_at,
@@ -85,6 +91,7 @@ export async function getCustomer(id: string) {
       id: matched.customer_id,
       name: matched.customer_name,
       email: matched.customer_email,
+      phone: matched.customer_phone || "",
       customer_type: matched.customer_type,
       created_at: matched.created_at,
     };
@@ -405,7 +412,7 @@ function getGenAI(): GoogleGenAI | null {
   return genAIInstance;
 }
 
-const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+const GEMINI_MODELS = ["gemini-3.7-flash", "gemini-flash-latest"];
 
 function cleanAndParseJson(raw: string | null | undefined): any {
   if (!raw) return null;
@@ -891,6 +898,7 @@ export interface CreateSandboxIncidentInput {
   customerCustom?: {
     name: string;
     email: string;
+    phone?: string;
     customer_type?: string;
   };
   amount: number;
@@ -917,6 +925,7 @@ interface StoredSandboxIncident {
   customer_id: string;
   customer_name: string;
   customer_email: string;
+  customer_phone?: string;
   customer_type: string;
   amount: number;
   currency: string;
@@ -928,13 +937,16 @@ interface StoredSandboxIncident {
   priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   status:
     | "OPEN"
+    | "ACTIVE"
     | "ANALYZED"
     | "ACTION_SIMULATED"
     | "ACTION_DISPATCHED"
     | "RECOVERED"
     | "ESCALATED"
     | "ESCALATED_TO_HUMAN"
-    | "CLOSED";
+    | "RESOLVED"
+    | "CLOSED"
+    | "CANCELLED";
   customer_context: {
     transactionsCount: number;
     invoicesCount: number;
@@ -971,41 +983,20 @@ interface StoredSandboxIncident {
   updated_at: string;
 }
 
-const persistentSandboxIncidents = new Map<string, StoredSandboxIncident>();
-
-function mapStoredIncidentToResponse(item: StoredSandboxIncident) {
-  return {
-    incident: {
-      id: item.id,
-      label: item.label,
-      isSandbox: item.isSandbox,
-      scenarioTypeKey: item.scenario_type,
-      scenarioTypeName: item.scenario_type_name,
-      tag: item.tag,
-      category: item.category as any,
-      severity: item.severity,
-      amount: item.amount,
-      currency: item.currency,
-      paymentMethod: item.payment_method,
-      failureCode: item.failure_reason,
-      billingContext: item.billing_context,
-      status: item.status || "OPEN",
-      createdAt: item.created_at,
-    },
-    customer: {
-      id: item.customer_id,
-      name: item.customer_name,
-      email: item.customer_email,
-      customer_type: item.customer_type,
-      created_at: item.created_at,
-    },
-    context: item.customer_context,
-    analysis: item.analysis,
-    lifecycle: item.lifecycle,
-    actions: item.actions,
-    record: item,
-  };
-}
+export {
+  persistentSandboxIncidents,
+  scheduleAutonomousAttempt,
+  executeScheduledAttempt,
+  markSandboxIncidentPaid,
+  customerResolveIncident,
+  triggerScheduledAttemptNow,
+  cancelScheduledRecovery,
+} from "./autonomousRecoveryEngine.js";
+import {
+  persistentSandboxIncidents,
+  scheduleAutonomousAttempt,
+  mapStoredIncidentToResponse,
+} from "./autonomousRecoveryEngine.js";
 
 export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
   const supabase = getSupabaseClient();
@@ -1063,6 +1054,7 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
         id: `sb-cust-${randTag.toLowerCase()}`,
         name: input.customerCustom.name,
         email: input.customerCustom.email,
+        phone: input.customerCustom.phone || "",
         customer_type: input.customerCustom.customer_type || "INDIVIDUAL",
         created_at: new Date().toISOString(),
       };
@@ -1072,11 +1064,16 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
         id: "sb-cust-default",
         name: "Enterprise Account",
         email: "operations@example.test",
+        phone: "",
         customer_type: "ENTERPRISE",
         created_at: new Date().toISOString(),
       };
     }
   }
+
+  const resolvedPhone = input.customerCustom?.phone !== undefined
+    ? input.customerCustom.phone.trim()
+    : (customer.phone || "");
 
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1102,6 +1099,7 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
     customer_id: customer.id,
     customer_name: customer.name,
     customer_email: customer.email,
+    customer_phone: resolvedPhone,
     customer_type: customer.customer_type || "INDIVIDUAL",
     amount,
     currency,
@@ -1111,7 +1109,7 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
     billing_context: billingContext,
     severity,
     priority: severity,
-    status: "OPEN",
+    status: "ACTIVE",
     customer_context: {
       transactionsCount: transactions.length,
       invoicesCount: invoices.length,
@@ -1141,10 +1139,11 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
       currency,
       payment_method: paymentMethod,
       failure_reason: failureReason,
-      status: "OPEN",
+      status: "ACTIVE",
       metadata: {
         customer_name: customer.name,
         customer_email: customer.email,
+        customer_phone: resolvedPhone,
         severity,
         billing_context: billingContext,
       },
@@ -1174,12 +1173,13 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
     // Non-blocking
   }
 
-  const shouldAutoAnalyze = input.autoAnalyze !== false;
-  if (shouldAutoAnalyze) {
-    return await analyzeSandboxIncidentWithAI(incidentId, input.customInstruction);
-  }
+  // Autonomous Flow: Run initial AI analysis immediately
+  const analyzedResponse = await analyzeSandboxIncidentWithAI(incidentId, input.customInstruction);
 
-  return mapStoredIncidentToResponse(storedIncident);
+  // Automatically start autonomous recovery loop: Schedule Attempt #1 for 2 minutes later (120,000 ms)
+  scheduleAutonomousAttempt(incidentId, 1, 120_000);
+
+  return mapStoredIncidentToResponse(persistentSandboxIncidents.get(incidentId) || storedIncident);
 }
 
 export async function listSandboxIncidents(filters?: {
