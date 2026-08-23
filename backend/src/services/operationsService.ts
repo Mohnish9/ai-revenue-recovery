@@ -412,7 +412,7 @@ function getGenAI(): GoogleGenAI | null {
   return genAIInstance;
 }
 
-const GEMINI_MODELS = ["gemini-3.7-flash", "gemini-flash-latest"];
+const GEMINI_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash"];
 
 function cleanAndParseJson(raw: string | null | undefined): any {
   if (!raw) return null;

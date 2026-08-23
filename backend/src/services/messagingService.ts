@@ -9,6 +9,10 @@ export interface OutboundDeliveryResult {
   deliveryLabel: string;
   isRealDispatch: boolean;
   providerMessageId?: string;
+  providerStatus?: string;
+  providerErrorCode?: string;
+  providerErrorMessage?: string;
+  httpStatus?: number;
   destination: string;
   content: {
     subject?: string;
@@ -28,7 +32,7 @@ export async function sendWhatsAppMessage(params: {
 }): Promise<OutboundDeliveryResult> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
   const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
-  const fromWhatsApp = process.env.TWILIO_WHATSAPP_FROM?.trim() || "+14155238886";
+  const configuredFromWhatsApp = process.env.TWILIO_WHATSAPP_FROM?.trim() || "+14155238886";
   const rawDestination = params.toPhone?.trim() || "";
   const now = new Date().toISOString();
 
@@ -42,7 +46,9 @@ export async function sendWhatsAppMessage(params: {
         deliveryLabel: "WhatsApp Failed (No Phone)",
         isRealDispatch: true,
         destination: "[Missing Phone Number]",
-        error: "Recipient phone number was not provided.",
+        providerErrorCode: "MISSING_PHONE",
+        providerErrorMessage: "Recipient phone number was not provided on the incident.",
+        error: "Recipient phone number was not provided on the incident.",
         content: {
           body: params.messageBody,
           resolvedPaymentUrl: params.paymentUrl,
@@ -55,16 +61,29 @@ export async function sendWhatsAppMessage(params: {
       const cleanTo = rawDestination.replace(/[^\d+]/g, "");
       const formattedTo = cleanTo.startsWith("+") ? cleanTo : `+${cleanTo}`;
       const toWhatsApp = formattedTo.startsWith("whatsapp:") ? formattedTo : `whatsapp:${formattedTo}`;
-      const cleanFrom = fromWhatsApp.replace(/^whatsapp:/, "");
+
+      const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`;
+      const contentSid = process.env.TWILIO_WHATSAPP_CONTENT_SID?.trim() || process.env.TWILIO_CONTENT_SID?.trim();
+
+      const cleanFrom = configuredFromWhatsApp.replace(/^whatsapp:/, "");
       const fromWhatsAppFull = `whatsapp:${cleanFrom.startsWith("+") ? cleanFrom : `+${cleanFrom}`}`;
 
       const formData = new URLSearchParams();
       formData.append("To", toWhatsApp);
       formData.append("From", fromWhatsAppFull);
-      formData.append("Body", params.messageBody);
 
-      const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`;
-      const response = await fetch(
+      if (contentSid) {
+        formData.append("ContentSid", contentSid);
+        formData.append("ContentVariables", JSON.stringify({
+          "1": params.customerName || "Customer",
+          "2": params.paymentUrl || "https://recoverly.ai",
+          "3": "Payment Resolution"
+        }));
+      } else {
+        formData.append("Body", params.messageBody);
+      }
+
+      let response = await fetch(
         `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
         {
           method: "POST",
@@ -76,7 +95,38 @@ export async function sendWhatsAppMessage(params: {
         }
       );
 
-      const data = await response.json().catch(() => ({}));
+      let data = await response.json().catch(() => ({}));
+
+      // If initial sender fails with sender error and wasn't the sandbox default +14155238886, retry with sandbox number
+      if (!response.ok && (data.code === 572002 || data.code === 21211 || data.code === 63007) && cleanFrom !== "+14155238886") {
+        const retryFormData = new URLSearchParams();
+        retryFormData.append("To", toWhatsApp);
+        retryFormData.append("From", "whatsapp:+14155238886");
+        if (contentSid) {
+          retryFormData.append("ContentSid", contentSid);
+          retryFormData.append("ContentVariables", JSON.stringify({
+            "1": params.customerName || "Customer",
+            "2": params.paymentUrl || "https://recoverly.ai",
+            "3": "Payment Resolution"
+          }));
+        } else {
+          retryFormData.append("Body", params.messageBody);
+        }
+
+        response = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: authHeader,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: retryFormData.toString(),
+          }
+        );
+        data = await response.json().catch(() => ({}));
+      }
+
       if (response.ok && data.sid) {
         return {
           channel: "WHATSAPP",
@@ -85,6 +135,8 @@ export async function sendWhatsAppMessage(params: {
           deliveryLabel: "WhatsApp Sent (Twilio)",
           isRealDispatch: true,
           providerMessageId: data.sid,
+          providerStatus: data.status || "queued",
+          httpStatus: response.status,
           destination: formattedTo,
           content: {
             body: params.messageBody,
@@ -93,16 +145,27 @@ export async function sendWhatsAppMessage(params: {
           dispatchedAt: now,
         };
       } else {
-        const errorMsg = data.message || `Twilio WhatsApp HTTP ${response.status} (Code: ${data.code || "UNKNOWN"})`;
-        console.warn("[WhatsApp Adapter] Twilio WhatsApp call returned error:", errorMsg);
+        const isContentSidRequired = data.code === 21654;
+        const deliveryLabel = isContentSidRequired
+          ? "WhatsApp Template Required (ContentSid)"
+          : `WhatsApp Failed (${data.code || response.status})`;
+        const errorMsg = isContentSidRequired
+          ? "Twilio WhatsApp trial accounts require pre-approved Content Templates (ContentSid). Custom text bodies require an upgraded account or an active 24-hour inbound WhatsApp conversation session."
+          : data.message || `Twilio WhatsApp HTTP ${response.status} (Code: ${data.code || "UNKNOWN"})`;
+
+        console.info(`[WhatsApp Adapter] ${deliveryLabel}: ${errorMsg}`);
 
         return {
           channel: "WHATSAPP",
           provider: "TWILIO",
           status: "FAILED",
-          deliveryLabel: `WhatsApp Failed (${data.code || response.status})`,
+          deliveryLabel,
           isRealDispatch: true,
           providerMessageId: data.sid || undefined,
+          providerStatus: data.status || `HTTP_${response.status}`,
+          providerErrorCode: String(data.code || response.status),
+          providerErrorMessage: errorMsg,
+          httpStatus: response.status,
           destination: formattedTo,
           error: errorMsg,
           content: {
@@ -121,6 +184,8 @@ export async function sendWhatsAppMessage(params: {
         deliveryLabel: "WhatsApp Network Error",
         isRealDispatch: true,
         destination: rawDestination,
+        providerErrorCode: "NETWORK_EXCEPTION",
+        providerErrorMessage: err?.message || "Failed to reach Twilio API",
         error: err?.message || "Failed to reach Twilio API",
         content: {
           body: params.messageBody,
@@ -170,7 +235,9 @@ export async function sendSmsMessage(params: {
         deliveryLabel: "SMS Failed (Missing TWILIO_SMS_FROM)",
         isRealDispatch: true,
         destination: rawDestination || "[No Phone Provided]",
-        error: "TWILIO_SMS_FROM sender number is not configured.",
+        providerErrorCode: "CONFIG_ERROR",
+        providerErrorMessage: "TWILIO_SMS_FROM sender number is not configured in environment.",
+        error: "TWILIO_SMS_FROM sender number is not configured in environment.",
         content: {
           body: params.messageBody,
           resolvedPaymentUrl: params.paymentUrl,
@@ -187,7 +254,9 @@ export async function sendSmsMessage(params: {
         deliveryLabel: "SMS Failed (No Phone)",
         isRealDispatch: true,
         destination: "[Missing Phone Number]",
-        error: "Recipient phone number was not provided.",
+        providerErrorCode: "MISSING_PHONE",
+        providerErrorMessage: "Recipient phone number was not provided on the incident.",
+        error: "Recipient phone number was not provided on the incident.",
         content: {
           body: params.messageBody,
           resolvedPaymentUrl: params.paymentUrl,
@@ -202,12 +271,14 @@ export async function sendSmsMessage(params: {
       const cleanFrom = fromSms.replace(/[^\d+]/g, "");
       const formattedFrom = cleanFrom.startsWith("+") ? cleanFrom : `+${cleanFrom}`;
 
+      const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`;
+
+      // Dispatch exact dynamic message generated by Gemini
       const formData = new URLSearchParams();
       formData.append("To", formattedTo);
       formData.append("From", formattedFrom);
       formData.append("Body", params.messageBody);
 
-      const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`;
       const response = await fetch(
         `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
         {
@@ -221,6 +292,7 @@ export async function sendSmsMessage(params: {
       );
 
       const data = await response.json().catch(() => ({}));
+
       if (response.ok && data.sid) {
         return {
           channel: "SMS",
@@ -229,6 +301,8 @@ export async function sendSmsMessage(params: {
           deliveryLabel: "SMS Sent (Twilio)",
           isRealDispatch: true,
           providerMessageId: data.sid,
+          providerStatus: data.status || "queued",
+          httpStatus: response.status,
           destination: formattedTo,
           content: {
             body: params.messageBody,
@@ -244,9 +318,13 @@ export async function sendSmsMessage(params: {
           channel: "SMS",
           provider: "TWILIO",
           status: "FAILED",
-          deliveryLabel: `SMS Failed (${data.code || response.status})`,
+          deliveryLabel: `SMS Failed (Twilio ${data.code || response.status})`,
           isRealDispatch: true,
           providerMessageId: data.sid || undefined,
+          providerStatus: data.status || `HTTP_${response.status}`,
+          providerErrorCode: String(data.code || response.status),
+          providerErrorMessage: errorMsg,
+          httpStatus: response.status,
           destination: formattedTo,
           error: errorMsg,
           content: {
@@ -265,6 +343,8 @@ export async function sendSmsMessage(params: {
         deliveryLabel: "SMS Network Error",
         isRealDispatch: true,
         destination: rawDestination,
+        providerErrorCode: "NETWORK_EXCEPTION",
+        providerErrorMessage: err?.message || "Failed to reach Twilio SMS API",
         error: err?.message || "Failed to reach Twilio SMS API",
         content: {
           body: params.messageBody,
@@ -315,7 +395,9 @@ export async function sendEmailMessage(params: {
         deliveryLabel: "Email Failed (No Email)",
         isRealDispatch: true,
         destination: "[Missing Email Address]",
-        error: "Recipient email address was not provided.",
+        providerErrorCode: "MISSING_EMAIL",
+        providerErrorMessage: "Recipient email address was not provided on the incident.",
+        error: "Recipient email address was not provided on the incident.",
         content: {
           subject: params.subject,
           body: params.bodyText,
@@ -372,6 +454,8 @@ export async function sendEmailMessage(params: {
           deliveryLabel: "Email Sent (Resend)",
           isRealDispatch: true,
           providerMessageId: data.id,
+          providerStatus: "delivered",
+          httpStatus: response.status,
           destination: rawDestination,
           content: {
             subject: params.subject,
@@ -388,9 +472,13 @@ export async function sendEmailMessage(params: {
           channel: "EMAIL",
           provider: "RESEND",
           status: "FAILED",
-          deliveryLabel: `Email Failed (${response.status})`,
+          deliveryLabel: `Email Failed (Resend ${response.status})`,
           isRealDispatch: true,
           providerMessageId: data.id || undefined,
+          providerStatus: `HTTP_${response.status}`,
+          providerErrorCode: String(data.name || data.statusCode || response.status),
+          providerErrorMessage: errorMsg,
+          httpStatus: response.status,
           destination: rawDestination,
           error: errorMsg,
           content: {
@@ -405,6 +493,40 @@ export async function sendEmailMessage(params: {
       console.warn("[Email Adapter] Exception calling Resend:", err);
       return {
         channel: "EMAIL",
+        provider: "RESEND",
+        status: "FAILED",
+        deliveryLabel: "Email Network Error",
+        isRealDispatch: true,
+        destination: rawDestination,
+        providerErrorCode: "NETWORK_EXCEPTION",
+        providerErrorMessage: err?.message || "Failed to reach Resend API",
+        error: err?.message || "Failed to reach Resend API",
+        content: {
+          subject: params.subject,
+          body: params.bodyText,
+          resolvedPaymentUrl: params.paymentUrl,
+        },
+        dispatchedAt: now,
+      };
+    }
+  }
+
+  // Resend not configured
+  return {
+    channel: "EMAIL",
+    provider: "SIMULATION_ENGINE",
+    status: "SIMULATED",
+    deliveryLabel: "Email Simulated (No Resend API Key)",
+    isRealDispatch: false,
+    destination: rawDestination || "[No Email Provided]",
+    content: {
+      subject: params.subject,
+      body: params.bodyText,
+      resolvedPaymentUrl: params.paymentUrl,
+    },
+    dispatchedAt: now,
+  };
+}
         provider: "RESEND",
         status: "FAILED",
         deliveryLabel: "Email Network Error",
@@ -437,4 +559,5 @@ export async function sendEmailMessage(params: {
     dispatchedAt: now,
   };
 }
+
 

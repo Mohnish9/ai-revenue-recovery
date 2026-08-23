@@ -224,8 +224,8 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                 ? new Date(sb.scheduler.nextAttemptAt).getTime()
                 : (sb as any).scheduledRecovery?.targetExecutionTime || 0;
               const schedStatus = sb.scheduledRecovery?.status || sb.scheduler?.status || "SCHEDULED";
-              const nextAttemptNum = sb.scheduledRecovery?.attemptNumber || sb.scheduler?.nextAttemptNumber || 1;
-              const hasTimer = Boolean(targetTime && schedStatus === "SCHEDULED");
+              const nextAttemptNum = sb.scheduledRecovery?.attemptNumber || sb.scheduler?.nextAttemptNumber || (sb.actions?.length ? sb.actions.length + 1 : 1);
+              const hasTimer = Boolean(targetTime && schedStatus === "SCHEDULED" && sb.incident.status !== "RECOVERED" && sb.incident.status !== "ESCALATED_TO_HUMAN" && sb.incident.status !== "CANCELLED");
               const countdownStr = formatCountdown(targetTime);
               const isRecovered = sb.incident.status === "RECOVERED";
               const isEscalated =
@@ -233,6 +233,7 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                 sb.incident.status === "ESCALATED_TO_HUMAN" ||
                 schedStatus === "ESCALATED_TO_HUMAN";
               const phoneVal = (sb.customer as any).phone || sb.incident.customer_phone;
+              const executedActions = (sb.actions || []).slice().sort((a, b) => (a.attemptNumber || 0) - (b.attemptNumber || 0));
 
               return (
                 <div
@@ -249,9 +250,9 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "1.4fr 1fr 1.6fr 1fr",
+                      gridTemplateColumns: "1.3fr 0.9fr 1.8fr 1fr",
                       gap: "20px",
-                      alignItems: "center",
+                      alignItems: "start",
                     }}
                   >
                     {/* Col 1: Problem & Customer */}
@@ -292,7 +293,7 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                       <div style={{ fontSize: "10.5px", color: "#64748b" }}>{sb.incident.paymentMethod}</div>
                     </div>
 
-                    {/* Col 3: LIVE COUNTDOWN TIMER & Next Action */}
+                    {/* Col 3: REAL EXECUTION TRACE & Countdown */}
                     <div
                       style={{
                         background: isRecovered ? "#f0fdf4" : isEscalated ? "#fef2f2" : "#f8fafc",
@@ -307,58 +308,129 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                             ✓ 100% RECOVERED & SETTLED
                           </div>
                           <div style={{ fontSize: "12px", color: "#14532d", marginTop: "2px" }}>
-                            Payment resolved successfully. Autonomous loop closed.
+                            Payment resolved successfully. Autonomous recovery closed.
                           </div>
                         </div>
                       ) : isEscalated ? (
                         <div>
                           <div style={{ fontSize: "11px", fontWeight: 700, color: "#991b1b", textTransform: "uppercase" }}>
-                            ⚠ ESCALATED TO HUMAN OPS
+                            🚨 ESCALATED TO HUMAN OPS
                           </div>
                           <div style={{ fontSize: "12px", color: "#7f1d1d", marginTop: "2px" }}>
-                            Max 3 autonomous attempts completed without settlement.
-                          </div>
-                        </div>
-                      ) : hasTimer ? (
-                        <div>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ fontSize: "10px", fontWeight: 800, color: "#4f46e5", letterSpacing: "0.5px", textTransform: "uppercase" }}>
-                              NEXT RECOVERY ACTION COUNTDOWN
-                            </span>
-                            <span style={{ fontSize: "10.5px", fontWeight: 700, color: "#64748b" }}>
-                              Attempt {nextAttemptNum} of 3
-                            </span>
-                          </div>
-
-                          <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginTop: "4px" }}>
-                            <div
-                              style={{
-                                fontSize: "24px",
-                                fontWeight: 900,
-                                fontFamily: "DM Mono",
-                                color: "#4f46e5",
-                                letterSpacing: "-0.5px",
-                              }}
-                            >
-                              ⏱ {countdownStr}
-                            </div>
-                          </div>
-
-                          <div style={{ fontSize: "11.5px", color: "#334155", fontWeight: 600, marginTop: "4px" }}>
-                            Strategy: {sb.analysis?.selectedStrategy || "Multi-Rail Recovery Strategy"}
-                          </div>
-                          <div style={{ fontSize: "10.5px", color: "#64748b" }}>
-                            Channel: WhatsApp / SMS / Email
+                            All 3 autonomous attempts completed without payment. Full VIP dossier generated.
                           </div>
                         </div>
                       ) : (
                         <div>
-                          <div style={{ fontSize: "11px", fontWeight: 700, color: "#475569" }}>
-                            STATUS: {schedStatus || sb.incident.status}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: "10px", fontWeight: 800, color: "#4f46e5", letterSpacing: "0.5px", textTransform: "uppercase" }}>
+                              {hasTimer ? "NEXT RECOVERY ACTION COUNTDOWN" : "AUTONOMOUS RECOVERY STATUS"}
+                            </span>
+                            <span style={{ fontSize: "10.5px", fontWeight: 700, color: "#64748b" }}>
+                              {executedActions.length} of 3 Attempts Completed
+                            </span>
                           </div>
-                          <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "2px" }}>
-                            {sb.analysis?.strategyJustification || sb.analysis?.aiReasoning || "AI strategy formulated."}
-                          </div>
+
+                          {hasTimer && (
+                            <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginTop: "4px", marginBottom: "8px" }}>
+                              <div
+                                style={{
+                                  fontSize: "22px",
+                                  fontWeight: 900,
+                                  fontFamily: "DM Mono",
+                                  color: "#4f46e5",
+                                  letterSpacing: "-0.5px",
+                                }}
+                              >
+                                ⏱ {countdownStr}
+                              </div>
+                              <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 600 }}>
+                                (Attempt #{nextAttemptNum} scheduled)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Real Attempts Breakdown */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "8px" }}>
+                        {[1, 2, 3].map((num) => {
+                          const act = executedActions.find((a) => a.attemptNumber === num);
+                          const isCurrentPending = !act && num === nextAttemptNum && !isRecovered && !isEscalated;
+                          const primaryDisp = act?.channelDispatches?.[0];
+                          const isSent = act?.providerStatus === "SENT" || act?.providerStatus === "DELIVERED" || primaryDisp?.status === "SENT";
+                          const isFailed = act?.providerStatus === "FAILED" || primaryDisp?.status === "FAILED" || act?.status === "CHANNEL_EXECUTION_FAILED";
+
+                          return (
+                            <div
+                              key={num}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "4px 8px",
+                                borderRadius: "6px",
+                                background: act ? (isSent ? "#f0fdf4" : "#fef2f2") : isCurrentPending ? "#eef2ff" : "#f1f5f9",
+                                border: `1px solid ${act ? (isSent ? "#bbf7d0" : "#fecaca") : isCurrentPending ? "#c7d2fe" : "#e2e8f0"}`,
+                                fontSize: "11px",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                <strong style={{ color: "#334155" }}>Attempt #{num}:</strong>
+                                {act ? (
+                                  <span style={{ fontWeight: 700, color: isSent ? "#166534" : "#991b1b" }}>
+                                    {act.selectedChannel || act.aiChannel || "SMS"}
+                                  </span>
+                                ) : isCurrentPending ? (
+                                  <span style={{ color: "#4f46e5", fontStyle: "italic" }}>
+                                    Dynamic AI Channel Selection
+                                  </span>
+                                ) : (
+                                  <span style={{ color: "#94a3b8" }}>NOT EXECUTED</span>
+                                )}
+                              </div>
+
+                              <div>
+                                {act ? (
+                                  <span
+                                    style={{
+                                      fontSize: "10px",
+                                      fontWeight: 800,
+                                      padding: "1px 6px",
+                                      borderRadius: "4px",
+                                      background: isSent ? "#16a34a" : "#dc2626",
+                                      color: "#ffffff",
+                                    }}
+                                  >
+                                    {isSent ? "SENT" : "FAILED"}
+                                  </span>
+                                ) : isCurrentPending ? (
+                                  <span
+                                    style={{
+                                      fontSize: "10px",
+                                      fontWeight: 700,
+                                      color: "#4f46e5",
+                                      background: "#e0e7ff",
+                                      padding: "1px 6px",
+                                      borderRadius: "4px",
+                                    }}
+                                  >
+                                    PENDING
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: "10px", color: "#94a3b8" }}>—</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Latest Attempt Provider Details if executed */}
+                      {executedActions.length > 0 && (
+                        <div style={{ marginTop: "8px", fontSize: "10.5px", color: "#475569", background: "#f8fafc", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                          <strong>Latest Dispatch Feedback:</strong>{" "}
+                          {executedActions[executedActions.length - 1].details || executedActions[executedActions.length - 1].reason}
                         </div>
                       )}
                     </div>
@@ -368,26 +440,33 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                       {!isRecovered && !isEscalated && (
                         <>
                           <button
-                            onClick={() => setResolvingIncident(sb)}
-                            className="btn btn-primary btn-sm"
-                            style={{
-                              fontWeight: 700,
-                              fontSize: "11.5px",
-                              padding: "7px 12px",
-                              boxShadow: "0 2px 8px rgba(79, 70, 229, 0.25)",
-                            }}
-                          >
-                            🔗 Customer Recovery Link
-                          </button>
-
-                          <button
                             onClick={() => handleTriggerNow(sb.incident.id)}
                             disabled={triggeringId === sb.incident.id}
                             className="btn btn-secondary btn-sm"
-                            style={{ fontSize: "11px", padding: "5px 10px" }}
-                            title="Fast-forward execution of next attempt without waiting"
+                            style={{
+                              fontSize: "11.5px",
+                              fontWeight: 700,
+                              padding: "7px 10px",
+                              background: "#4f46e5",
+                              color: "#ffffff",
+                              border: "none",
+                              boxShadow: "0 2px 6px rgba(79, 70, 229, 0.25)",
+                            }}
+                            title="Run the next scheduled attempt immediately with live AI evaluation"
                           >
-                            {triggeringId === sb.incident.id ? "Executing..." : "⚡ Trigger Attempt Now"}
+                            {triggeringId === sb.incident.id ? "Executing AI Attempt..." : `⚡ Run Attempt #${nextAttemptNum} Now`}
+                          </button>
+
+                          <button
+                            onClick={() => setResolvingIncident(sb)}
+                            className="btn btn-outline btn-sm"
+                            style={{
+                              fontWeight: 600,
+                              fontSize: "11px",
+                              padding: "6px 10px",
+                            }}
+                          >
+                            🔗 Customer Payment Link
                           </button>
 
                           <button

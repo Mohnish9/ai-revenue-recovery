@@ -7,6 +7,34 @@ import {
   sendEmailMessage,
 } from "./messagingService.js";
 
+export interface StoredActionRecord {
+  id: string;
+  incidentId: string;
+  attemptNumber?: number;
+  actionType: string;
+  actionTitle: string;
+  selectedChannel?: "EMAIL" | "WHATSAPP" | "SMS" | string;
+  aiStrategy?: string;
+  aiChannel?: "EMAIL" | "WHATSAPP" | "SMS" | string;
+  status: string;
+  gatewayLatency: string;
+  pspResponseCode: string;
+  projectedRecovery: number;
+  operatorName?: string;
+  reason?: string;
+  messageGoal?: string;
+  urgency?: string;
+  generatedMessageText?: string;
+  provider?: string;
+  providerStatus?: string;
+  providerMessageId?: string;
+  executedAt: string;
+  channelDispatches?: OutboundDeliveryResult[];
+  details?: string;
+  result?: string;
+  nextDecision?: string;
+}
+
 export interface StoredTimelineEvent {
   id: string;
   timestamp: string;
@@ -87,22 +115,7 @@ export interface StoredSandboxIncident {
     timestamp: string;
     detail: string;
   }>;
-  actions: Array<{
-    id: string;
-    incidentId: string;
-    attemptNumber?: number;
-    actionType: string;
-    actionTitle: string;
-    status: string;
-    gatewayLatency: string;
-    pspResponseCode: string;
-    projectedRecovery: number;
-    operatorName?: string;
-    reason?: string;
-    executedAt: string;
-    channelDispatches?: OutboundDeliveryResult[];
-    details?: string;
-  }>;
+  actions: StoredActionRecord[];
   escalationDossier?: any;
   recoveryDossier?: any;
   created_at: string;
@@ -269,186 +282,281 @@ export async function executeScheduledAttempt(incidentId: string, attemptNumber:
     const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
     // Update scheduler status
+    // Update scheduler status
     if (item.scheduler) {
       item.scheduler.status = "RUNNING";
     }
 
-    // Determine strategy, messaging, and channels dynamically with Gemini
-    let aiDecision: any = null;
+    const baseUrl = (process.env.FRONTEND_URL || "http://localhost:3000").replace(/\/$/, "");
+    const paymentUrl = `${baseUrl}/resolve/${item.id}`;
 
-    if (attemptNumber === 1 && item.analysis && !item.analysis.unavailable) {
-      // Use initial Gemini decision for Attempt 1
-      aiDecision = {
-        selectedCapability: item.analysis.recommendedAction || "WHATSAPP_OUTREACH",
-        actionTitle: item.analysis.selectedStrategy || "Autonomous Omnichannel Outreach",
-        decisionRationale: item.analysis.strategyJustification || item.analysis.aiReasoning,
-        selectedStrategy: item.analysis.selectedStrategy,
-        customerMessage: item.analysis.customerMessage,
-        recoveryProbability: item.analysis.recoveryProbability || 0.82,
-        pspResponseCode: "OUTREACH_DISPATCHED_200_OK",
-        latencyMs: 118,
-      };
-    } else {
-      // Reassess with Gemini using full runtime telemetry from previous attempts
-      const pastAttemptsSummary = item.actions
-        .map(
-          (a, idx) =>
-            `Attempt #${a.attemptNumber || idx + 1}: Executed "${a.actionTitle}" (${a.actionType}) at ${a.executedAt}. Status: ${a.status}. Channels: ${a.channelDispatches?.map((c) => `${c.channel} [${c.deliveryLabel}]`).join(", ") || "Simulated"}. Result: ${a.details || "Payment remaining unsettled"}`
-        )
-        .join("\n");
+    // Build structured history of previous attempts for Gemini context
+    const pastAttemptsHistoryText = item.actions && item.actions.length > 0
+      ? item.actions
+          .slice()
+          .reverse()
+          .map((a, idx) => {
+            const primaryDispatch = a.channelDispatches?.[0];
+            return `[Attempt #${a.attemptNumber || idx + 1}]
+- Strategy Executed: ${a.aiStrategy || a.actionType} (${a.actionTitle})
+- Channel Selected by AI: ${a.selectedChannel || primaryDispatch?.channel || "SMS"}
+- Provider Used: ${a.provider || (primaryDispatch?.channel === "EMAIL" ? "Resend" : "Twilio")}
+- Delivery Status: ${primaryDispatch?.status || a.status}
+- Provider ID / SID: ${primaryDispatch?.providerMessageId || "None"}
+- Delivery Label / Error: ${primaryDispatch?.error || primaryDispatch?.deliveryLabel || a.details || "None"}
+- Time Executed: ${a.executedAt}
+- Customer Resolution Status: UNRESOLVED (Payment pending)`;
+          })
+          .join("\n\n")
+      : "No previous attempts executed. This is Attempt #1 (Initial Dynamic Intervention).";
 
-      const prompt = `You are Recoverly's Autonomous Revenue Recovery AI Engine.
-You are executing Attempt #${attemptNumber} of 3 (Bounded Autonomy Limit) for Incident ${item.id}.
+    // Reassess with Gemini dynamically for EVERY single attempt (Attempt 1, 2, 3)
+    const prompt = `You are Recoverly's Autonomous Revenue Recovery AI Engine.
+You are dynamically formulating and executing Attempt #${attemptNumber} of 3 (Bounded Autonomy Limit) for Incident ${item.id}.
 
-INCIDENT CONTEXT:
-- Problem: "${item.scenario_type_name}" (${item.category})
-- Customer: ${item.customer_name} (${item.customer_email}${item.customer_phone ? `, Phone: ${item.customer_phone}` : ""})
+CURRENT INCIDENT STATE:
+- Problem: "${item.scenario_type_name}" (Category: ${item.category})
+- Customer Name: "${item.customer_name}"
+- Customer Email: "${item.customer_email}" (${item.customer_email ? "Available" : "Missing"})
+- Customer Phone: "${item.customer_phone || "Not provided"}" (${item.customer_phone ? "Available" : "Missing"})
+- Customer Type: ${item.customer_type}
 - Amount at Risk: ${item.currency} ${item.amount.toLocaleString()}
-- Failure Reason: "${item.failure_reason}"
+- Payment Rail & Method: ${item.payment_rail} • ${item.payment_method}
+- Failure Reason / Code: "${item.failure_reason}"
 - Billing Context: "${item.billing_context}"
-- Past Attempts Executed:
-${pastAttemptsSummary || "No previous attempts executed."}
+- Current Settlement Status: UNRESOLVED
+- Customer Resolution Link: ${paymentUrl}
 
-TASK:
-1. Evaluate why previous attempts did not settle and formulate the NEXT optimal recovery strategy.
-2. Formulate courteous, high-converting messages tailored with real incident values.
-3. Select appropriate channels (e.g. WHATSAPP, SMS, EMAIL).
+PREVIOUS ATTEMPT HISTORY & PROVIDER OUTCOMES:
+${pastAttemptsHistoryText}
+
+CRITICAL ARCHITECTURAL RULES:
+1. CHANNEL MUST NOT BE FIXED:
+   You must dynamically select the single best channel ("EMAIL", "WHATSAPP", or "SMS") for Attempt #${attemptNumber}.
+   - If Attempt #1 used SMS or WhatsApp and is still unrecovered or failed, evaluate switching to EMAIL or WHATSAPP for Attempt #2.
+   - If a provider had a delivery error in past attempts (e.g., WhatsApp template restrictions), switch to a different reliable channel (e.g., EMAIL or SMS).
+   - Tailor the channel choice to the incident category:
+     * High-value B2B Invoices: EMAIL is often best for formal invoice reconciliation.
+     * Failed Subscriptions / Cards: WHATSAPP or SMS with 1-click update link.
+     * Checkout Abandonment / UPI: WHATSAPP with 1-click UPI intent or SMS.
+2. DYNAMIC FRESH MESSAGE GENERATION:
+   You MUST generate fresh, non-repetitive copy for Attempt #${attemptNumber}. Never reuse a previous attempt's message.
+   - For Attempt 1: Courteous first notification with direct 1-click resolution link.
+   - For Attempt 2: Helpful follow-up explaining the issue and offering alternative payment or assistance.
+   - For Attempt 3: Urgent final notice before account suspension or executive human handoff.
+   - Every generated message MUST include the real customer name (${item.customer_name}), amount (${item.currency} ${item.amount.toLocaleString()}), and resolution link (${paymentUrl}).
 
 Respond strictly in valid JSON matching this schema:
 {
-  "selectedCapability": "One of: WHATSAPP_OUTREACH | SMS_OUTREACH | EMAIL_OUTREACH | SMART_RETRY | CARD_UPDATE_LINK | UPI_REAUTHORIZATION | ALTERNATE_PAYMENT_METHOD | PROMISE_TO_PAY | RETENTION_OFFER",
-  "actionTitle": "Descriptive title for this attempt",
-  "decisionRationale": "Clear AI reasoning explaining why this intervention was selected",
-  "selectedStrategy": "Recovery Strategy Name",
-  "channelsToDispatch": ["WHATSAPP", "SMS", "EMAIL"],
-  "customerMessage": {
-    "whatsapp": "High-converting WhatsApp message body with real name ${item.customer_name} and link https://pay.recoverly.test/resolve/${item.id}",
-    "sms": "Concise SMS message with real name and short link",
-    "email": {
-      "subject": "Email subject line",
-      "body": "Detailed professional email body"
-    }
+  "recommendedAction": "One of: PAYMENT_LINK | CARD_UPDATE | SMART_RETRY | MANDATE_REAUTHORIZE | CHECKOUT_RECOVERY | INVOICE_REMINDER | RETENTION_OUTREACH | ESCALATION",
+  "recommendedChannel": "EMAIL" | "WHATSAPP" | "SMS",
+  "reason": "Clear AI reasoning explaining why this channel and strategy was chosen for Attempt #${attemptNumber} based on past attempt feedback.",
+  "messageGoal": "Tactical objective of this specific attempt",
+  "urgency": "LOW" | "MEDIUM" | "HIGH" | "FINAL_NOTICE",
+  "customerContext": "Key takeaway about customer profile and contact strategy",
+  "nextAttemptMinutes": 5,
+  "fallbackChannel": "EMAIL" | "WHATSAPP" | "SMS",
+  "shouldEscalate": false,
+  "generatedMessage": {
+    "channel": "EMAIL" | "WHATSAPP" | "SMS",
+    "smsText": "Concise SMS text containing ${item.customer_name}, ${item.currency} ${item.amount.toLocaleString()}, and ${paymentUrl}",
+    "whatsappText": "Courteous WhatsApp message containing ${item.customer_name}, ${item.currency} ${item.amount.toLocaleString()}, failure reason, and ${paymentUrl}",
+    "emailSubject": "High-converting email subject line",
+    "emailBody": "Professional personalized email body containing customer greeting, clear summary of ${item.currency} ${item.amount.toLocaleString()} for ${item.payment_method}, failure reason ${item.failure_reason}, resolution link ${paymentUrl}, and formal signature."
   },
-  "recoveryProbability": 0.85,
-  "telemetryObservation": "Realistic telemetry feedback observed after dispatch",
-  "pspResponseCode": "AUTH_OK_200"
+  "recoveryProbability": 0.82,
+  "pspResponseCode": "AUTH_200_OK"
 }`;
 
-      try {
-        const ai = getGeminiClient();
-        if (ai) {
-          let text: string | undefined;
-          const modelsToTry = ["gemini-3.7-flash", "gemini-flash-latest"];
-          for (const model of modelsToTry) {
-            try {
-              const response = await ai.models.generateContent({
-                model,
-                contents: prompt,
-                config: {
-                  responseMimeType: "application/json",
-                  systemInstruction: "You are an elite autonomous fintech revenue operations specialist.",
-                },
-              });
-              if (response.text) {
-                text = response.text;
-                break;
-              }
-            } catch (mErr) {
-              // Try next valid model
+    let aiDecision: any = null;
+
+    try {
+      const ai = getGeminiClient();
+      if (ai) {
+        let text: string | undefined;
+        const modelsToTry = ["gemini-3.7-flash", "gemini-3.6-flash"];
+        for (const model of modelsToTry) {
+          try {
+            const response = await ai.models.generateContent({
+              model,
+              contents: prompt,
+              config: {
+                responseMimeType: "application/json",
+                systemInstruction:
+                  "You are an elite autonomous fintech revenue operations and multi-channel payment recovery AI specialist. Make intelligent, distinct, and non-repeating channel and strategy selections for each attempt.",
+              },
+            });
+            if (response.text) {
+              text = response.text;
+              break;
             }
-          }
-          if (text) {
-            aiDecision = cleanAndParseJson(text);
+          } catch (mErr) {
+            // Try next valid model
           }
         }
-      } catch (err) {
-        console.warn("[AutonomousEngine] Gemini reassessment fallback:", err);
+        if (text) {
+          aiDecision = cleanAndParseJson(text);
+        }
       }
-
-      if (!aiDecision || !aiDecision.selectedCapability) {
-        // Fallback decision
-        aiDecision = {
-          selectedCapability: attemptNumber === 2 ? "WHATSAPP_OUTREACH" : "RETENTION_OFFER",
-          actionTitle: attemptNumber === 2 ? "Omnichannel Fallback & UPI Intent" : "Dynamic 10% Rescue Incentive",
-          decisionRationale: `Attempt #${attemptNumber}: Escalating dunning cadence with omnichannel reminder.`,
-          selectedStrategy: attemptNumber === 2 ? "1-Click UPI & WhatsApp Dunning" : "Rescue Incentive Offer",
-          channelsToDispatch: ["WHATSAPP", "SMS", "EMAIL"],
-          customerMessage: {
-            whatsapp: `Hi ${item.customer_name}, following up regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}. Tap here to resolve securely in 1 click: https://pay.recoverly.test/resolve/${item.id}`,
-            sms: `Recoverly: Follow-up on your ${item.currency} ${item.amount.toLocaleString()} payment: https://rcvr.ly/${item.id.slice(-6)}`,
-            email: {
-              subject: `Reminder: Resolving payment of ${item.currency} ${item.amount.toLocaleString()}`,
-              body: `Dear ${item.customer_name},\n\nPlease review and resolve your pending payment of ${item.currency} ${item.amount.toLocaleString()}.\n\nResolve securely: https://pay.recoverly.test/resolve/${item.id}`,
-            },
-          },
-          recoveryProbability: 0.78,
-          telemetryObservation: "Dispatched omnichannel notifications. Awaiting customer confirmation.",
-          pspResponseCode: "OUTREACH_BATCH_DISPATCHED_200",
-        };
-      }
+    } catch (err) {
+      console.warn("[AutonomousEngine] Gemini dynamic attempt assessment error:", err);
     }
 
-    // Prepare outbound messages using actual runtime values (never hardcoded)
-    const paymentUrl = `https://pay.recoverly.test/resolve/${item.id}`;
+    // Algorithmic dynamic fallback if Gemini fails, ensuring distinct channel selection across attempts
+    if (!aiDecision || !aiDecision.recommendedChannel) {
+      const prevChannels = item.actions.map((a) => a.selectedChannel).filter(Boolean);
+      let selectedChannel: "EMAIL" | "WHATSAPP" | "SMS" = "WHATSAPP";
+      let recommendedAction = "PAYMENT_LINK";
+      let reason = `Attempt #${attemptNumber}: Autonomous dynamic recovery cascade.`;
+      let urgency: "LOW" | "MEDIUM" | "HIGH" | "FINAL_NOTICE" = "MEDIUM";
+
+      if (attemptNumber === 1) {
+        selectedChannel = item.customer_phone ? "WHATSAPP" : "EMAIL";
+        recommendedAction = "PAYMENT_LINK";
+        reason = `Attempt #1: Immediate 1-click notification on primary mobile channel.`;
+        urgency = "LOW";
+      } else if (attemptNumber === 2) {
+        // Switch channel if Attempt 1 was WhatsApp/SMS, try Email
+        selectedChannel = prevChannels.includes("EMAIL") ? "SMS" : "EMAIL";
+        recommendedAction = "INVOICE_REMINDER";
+        reason = `Attempt #2: Dynamic omnichannel shift to ${selectedChannel} for enhanced deliverability.`;
+        urgency = "MEDIUM";
+      } else {
+        selectedChannel = "SMS";
+        recommendedAction = "RETENTION_OUTREACH";
+        reason = `Attempt #3: Final urgent notice with retention grace period prior to human escalation.`;
+        urgency = "FINAL_NOTICE";
+      }
+
+      aiDecision = {
+        recommendedAction,
+        recommendedChannel: selectedChannel,
+        reason,
+        messageGoal: `Attempt #${attemptNumber} dynamic revenue recovery touchpoint`,
+        urgency,
+        customerContext: `Customer ${item.customer_name} (${item.customer_type})`,
+        nextAttemptMinutes: 5,
+        fallbackChannel: selectedChannel === "EMAIL" ? "SMS" : "EMAIL",
+        shouldEscalate: attemptNumber >= 3,
+        generatedMessage: {
+          channel: selectedChannel,
+          whatsapp: `Hi ${item.customer_name}, we noticed an issue with your payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`,
+          whatsappText: `Hi ${item.customer_name}, we noticed an issue with your payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`,
+          sms: `Recoverly: Resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: ${paymentUrl}`,
+          smsText: `Recoverly: Resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: ${paymentUrl}`,
+          emailSubject: `Action Required: Payment Resolution for ${item.customer_name} (${item.currency} ${item.amount.toLocaleString()})`,
+          emailBody: `Dear ${item.customer_name},\n\nWe encountered a temporary processing issue for your payment of ${item.currency} ${item.amount.toLocaleString()} on ${item.payment_method}.\n\nReason: ${item.failure_reason}\n\nPlease complete payment securely via our portal:\n${paymentUrl}\n\nBest regards,\nRecoverly Autonomous Operations`,
+        },
+        recoveryProbability: attemptNumber === 1 ? 0.85 : attemptNumber === 2 ? 0.74 : 0.62,
+        pspResponseCode: "OUTREACH_DISPATCHED_200",
+      };
+    }
+
+    // Normalize selected channel
+    let chosenChannel: "EMAIL" | "WHATSAPP" | "SMS" = "SMS";
+    const rawChannelUpper = String(aiDecision.recommendedChannel || "").toUpperCase();
+    if (rawChannelUpper.includes("EMAIL")) {
+      chosenChannel = "EMAIL";
+    } else if (rawChannelUpper.includes("WHATSAPP")) {
+      chosenChannel = "WHATSAPP";
+    } else {
+      chosenChannel = "SMS";
+    }
+
+    const genMsg = aiDecision.generatedMessage || {};
     const waBody =
-      aiDecision.customerMessage?.whatsapp ||
-      `Hi ${item.customer_name}, we noticed a temporary issue with your payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`;
+      genMsg.whatsappText ||
+      genMsg.whatsapp ||
+      `Hi ${item.customer_name}, we noticed an issue with your payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`;
     const smsBody =
-      aiDecision.customerMessage?.sms ||
-      `Recoverly: Resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: https://rcvr.ly/${item.id.slice(-6)}`;
+      genMsg.smsText ||
+      genMsg.sms ||
+      `Recoverly: Resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: ${paymentUrl}`;
     const emailSubject =
-      aiDecision.customerMessage?.email?.subject ||
+      genMsg.emailSubject ||
+      (genMsg.email && genMsg.email.subject) ||
       `Action Required: Resolving payment of ${item.currency} ${item.amount.toLocaleString()}`;
     const emailBody =
-      aiDecision.customerMessage?.email?.body ||
+      genMsg.emailBody ||
+      (genMsg.email && genMsg.email.body) ||
       `Dear ${item.customer_name},\n\nWe encountered an issue processing your payment of ${item.currency} ${item.amount.toLocaleString()} for ${item.payment_method}.\n\nReason: ${item.failure_reason}\n\nPlease click below to complete your payment:\n${paymentUrl}\n\nThank you,\nRecoverly Operations`;
 
-    // Execute Outbound Communications through Real Adapters (Twilio / Resend) with Simulation Fallback
-    const channelDispatches: OutboundDeliveryResult[] = await Promise.all([
-      sendWhatsAppMessage({
-        toPhone: item.customer_phone,
-        customerName: item.customer_name,
-        messageBody: waBody,
-        incidentId: item.id,
-        paymentUrl,
-      }),
-      sendSmsMessage({
-        toPhone: item.customer_phone,
-        customerName: item.customer_name,
-        messageBody: smsBody,
-        incidentId: item.id,
-        paymentUrl,
-      }),
-      sendEmailMessage({
+    // EXECUTE ONLY THE AI-SELECTED CHANNEL
+    let primaryDispatch: OutboundDeliveryResult;
+    if (chosenChannel === "EMAIL") {
+      primaryDispatch = await sendEmailMessage({
         toEmail: item.customer_email,
         customerName: item.customer_name,
         subject: emailSubject,
         bodyText: emailBody,
         incidentId: item.id,
         paymentUrl,
-      }),
-    ]);
+      });
+    } else if (chosenChannel === "WHATSAPP") {
+      primaryDispatch = await sendWhatsAppMessage({
+        toPhone: item.customer_phone,
+        customerName: item.customer_name,
+        messageBody: waBody,
+        incidentId: item.id,
+        paymentUrl,
+      });
+    } else {
+      primaryDispatch = await sendSmsMessage({
+        toPhone: item.customer_phone,
+        customerName: item.customer_name,
+        messageBody: smsBody,
+        incidentId: item.id,
+        paymentUrl,
+      });
+    }
 
+    const channelDispatches = [primaryDispatch];
     const prob = aiDecision.recoveryProbability || 0.8;
     const projectedRecovery = Math.round(item.amount * prob);
 
-    const actionRecord = {
+    const generatedMessageText =
+      chosenChannel === "EMAIL"
+        ? `Subject: ${emailSubject}\n\n${emailBody}`
+        : chosenChannel === "WHATSAPP"
+        ? waBody
+        : smsBody;
+
+    const isSuccess = primaryDispatch.status === "SENT" || primaryDispatch.status === "DELIVERED" || primaryDispatch.status === "SIMULATED";
+    const providerStatus = primaryDispatch.status;
+    const providerName = primaryDispatch.channel === "EMAIL" ? "Resend" : "Twilio";
+    const providerId = primaryDispatch.providerMessageId || undefined;
+
+    const actionRecord: StoredActionRecord = {
       id: `act-att-${attemptNumber}-${Date.now().toString().slice(-4)}`,
       incidentId: item.id,
       attemptNumber,
-      actionType: aiDecision.selectedCapability,
-      actionTitle: aiDecision.actionTitle || `Autonomous Attempt #${attemptNumber}`,
-      status: "EXECUTED",
-      gatewayLatency: `${Math.floor(Math.random() * 40 + 95)}ms`,
+      actionType: aiDecision.recommendedAction || "PAYMENT_LINK",
+      actionTitle: `Attempt #${attemptNumber}: ${aiDecision.recommendedAction || "Outreach"} via ${chosenChannel}`,
+      aiStrategy: aiDecision.recommendedAction || "Autonomous Outreach",
+      aiChannel: chosenChannel,
+      selectedChannel: chosenChannel,
+      status: isSuccess ? "EXECUTED" : "CHANNEL_EXECUTION_FAILED",
+      gatewayLatency: `${Math.floor(Math.random() * 40 + 85)}ms`,
       pspResponseCode: aiDecision.pspResponseCode || "DISPATCHED_200",
       projectedRecovery,
       operatorName: "Recoverly Autonomous AI Engine",
-      reason: aiDecision.decisionRationale,
+      reason: aiDecision.reason || `Executed dynamic recovery attempt #${attemptNumber} via ${chosenChannel}.`,
+      messageGoal: aiDecision.messageGoal,
+      urgency: aiDecision.urgency,
+      generatedMessageText,
+      provider: providerName,
+      providerStatus,
+      providerMessageId: providerId,
       executedAt: now.toISOString(),
       channelDispatches,
-      details:
-        aiDecision.telemetryObservation ||
-        `Executed Attempt #${attemptNumber} via ${channelDispatches.map((c) => c.deliveryLabel).join(", ")}.`,
+      details: isSuccess
+        ? `Dispatched ${chosenChannel} via ${providerName} (${primaryDispatch.deliveryLabel}). ID: ${providerId || "Simulated"}. Awaiting customer resolution.`
+        : `Channel execution failed: ${primaryDispatch.error || primaryDispatch.deliveryLabel}. Provider feedback recorded for Gemini Attempt #${attemptNumber + 1}.`,
+      result: "Customer unrecovered — awaiting resolution or next cadence trigger",
+      nextDecision:
+        attemptNumber < 3
+          ? `Schedule Attempt #${attemptNumber + 1} at T+5m for Gemini dynamic channel reassessment`
+          : "Autonomous limit reached — Escalate to VIP Revenue Operations Specialist",
     };
 
     item.actions.unshift(actionRecord);
@@ -463,12 +571,18 @@ Respond strictly in valid JSON matching this schema:
       type: "ATTEMPT",
       title: `Attempt #${attemptNumber} Executed • ${actionRecord.actionTitle}`,
       description: actionRecord.details || "",
-      status: "COMPLETED",
+      status: isSuccess ? "COMPLETED" : "FAILED",
       attemptNumber,
       channelDispatches,
       details: {
         actionType: actionRecord.actionType,
+        selectedChannel: actionRecord.selectedChannel,
+        aiStrategy: actionRecord.aiStrategy,
         reason: actionRecord.reason,
+        provider: actionRecord.provider,
+        providerStatus: actionRecord.providerStatus,
+        providerId: actionRecord.providerMessageId,
+        generatedMessage: actionRecord.generatedMessageText,
       },
     });
 
@@ -508,6 +622,9 @@ Respond strictly in valid JSON matching this schema:
           attemptNumber: a.attemptNumber,
           actionTitle: a.actionTitle,
           actionType: a.actionType,
+          selectedChannel: a.selectedChannel,
+          aiStrategy: a.aiStrategy,
+          reason: a.reason,
           executedAt: a.executedAt,
           channels: a.channelDispatches?.map((c) => ({
             channel: c.channel,
@@ -518,7 +635,7 @@ Respond strictly in valid JSON matching this schema:
           })),
           observation: a.details,
         })),
-        aiReasoning: "Customer did not complete payment across WhatsApp, SMS, and Email outreach windows.",
+        aiReasoning: "Customer did not complete payment across dynamic WhatsApp, SMS, and Email outreach windows.",
         recommendedHumanAction:
           item.category === "INVOICE"
             ? "Initiate executive AP phone outreach, verify purchase order authorization, and propose formal payment restructuring."

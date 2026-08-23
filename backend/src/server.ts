@@ -14,13 +14,19 @@ const distDir = path.resolve(frontendDir, "dist");
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
 
+app.set("etag", false);
 app.disable("x-powered-by");
 app.use(express.json());
+
+// CORS & Preflight handler
 app.use((request, response, next) => {
-  const origin = process.env.FRONTEND_URL ?? "*";
+  const origin = request.headers.origin || "*";
   response.header("Access-Control-Allow-Origin", origin);
-  response.header("Access-Control-Allow-Headers", "Content-Type");
+  response.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
   response.header("Access-Control-Allow-Methods", "GET,OPTIONS,POST,PUT,PATCH,DELETE");
+  if (request.headers.origin) {
+    response.header("Access-Control-Allow-Credentials", "true");
+  }
   if (request.method === "OPTIONS") {
     response.sendStatus(204);
     return;
@@ -28,12 +34,25 @@ app.use((request, response, next) => {
   next();
 });
 
+// Cache control headers for all /api endpoints to ensure fresh dynamic state
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  next();
+});
+
+// API Routes (must precede SPA fallback)
 app.use("/api", apiRoutes);
 
 // In dev mode, attach Vite middleware. In production, serve dist.
 if (process.env.NODE_ENV === "production" && fs.existsSync(distDir)) {
   app.use(express.static(distDir));
-  app.get("*", (_request, response) => {
+  app.get("*", (request, response) => {
+    if (request.path.startsWith("/api")) {
+      response.status(404).json({ error: "API route not found" });
+      return;
+    }
     response.sendFile(path.join(distDir, "index.html"));
   });
 } else {
@@ -49,9 +68,9 @@ if (process.env.NODE_ENV === "production" && fs.existsSync(distDir)) {
   app.use(vite.middlewares);
 }
 
-app.use((error: Error, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
-  console.error(error);
-  response.status(500).json({ error: "Internal server error" });
+app.use((error: Error, req: express.Request, response: express.Response, _next: express.NextFunction) => {
+  console.error(`[Server Error] Path: ${req.method} ${req.originalUrl}:`, error?.message || error);
+  response.status(500).json({ error: error?.message || "Internal server error" });
 });
 
 ensureDefaultAdminExists().catch(() => {});

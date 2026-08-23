@@ -26,7 +26,45 @@ import type {
   UserProfile,
 } from "./types";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "/api";
+export function getApiBaseUrl(): string {
+  const envUrl = (import.meta.env.VITE_API_BASE_URL || "").trim();
+  
+  if (!envUrl) {
+    return "/api";
+  }
+
+  // If in browser and envUrl points to localhost/0.0.0.0, use relative "/api" for same-origin preview compatibility
+  if (typeof window !== "undefined") {
+    if (
+      envUrl.includes("localhost") ||
+      envUrl.includes("0.0.0.0") ||
+      envUrl.includes("127.0.0.1")
+    ) {
+      return "/api";
+    }
+  }
+
+  // Normalize: remove trailing slashes
+  return envUrl.replace(/\/+$/, "");
+}
+
+export function resolveApiUrl(path: string): string {
+  const baseUrl = getApiBaseUrl();
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+
+  // If baseUrl already ends with /api and cleanPath starts with /api/, avoid duplicate /api/api/
+  if (baseUrl.endsWith("/api") && cleanPath.startsWith("/api/")) {
+    return `${baseUrl}${cleanPath.substring(4)}`;
+  }
+  
+  // If baseUrl is empty, return cleanPath
+  if (!baseUrl) {
+    return cleanPath;
+  }
+
+  return `${baseUrl}${cleanPath}`;
+}
+
 const AUTH_TOKEN_KEY = "recoverly_auth_token";
 
 export function getStoredToken(): string | null {
@@ -48,29 +86,59 @@ export function setStoredToken(token: string | null) {
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getStoredToken();
   const headers: Record<string, string> = {
+    Accept: "application/json",
     "Content-Type": "application/json",
-    ...(options?.headers as Record<string, string> || {}),
+    ...((options?.headers as Record<string, string>) || {}),
   };
 
   if (token && !headers["Authorization"]) {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...options,
-    headers,
-  });
+  const url = resolveApiUrl(path);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (netErr: any) {
+    const message = netErr?.message || "Network request failed";
+    console.error(`[API Network Error] ${options?.method || "GET"} ${url}:`, message);
+    throw new Error(`Unable to reach backend API (${message}). Check server status.`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  const isJson = contentType.includes("application/json") || contentType.includes("+json");
 
   if (!response.ok) {
-    let errorDetail = `Status ${response.status}`;
-    try {
-      const errJson = await response.json();
-      if (errJson.error) errorDetail = errJson.error;
-    } catch {
-      // ignore
+    let errorDetail = `Request failed (Status ${response.status} ${response.statusText || ""})`.trim();
+
+    if (isJson) {
+      try {
+        const errJson = await response.json();
+        if (errJson?.error) {
+          errorDetail = errJson.error;
+        } else if (errJson?.message) {
+          errorDetail = errJson.message;
+        }
+      } catch {
+        // Failed to parse error JSON
+      }
+    } else {
+      try {
+        const text = await response.text();
+        if (text && text.length < 300 && !text.includes("<!DOCTYPE") && !text.includes("<html") && !text.includes("<!doctype")) {
+          errorDetail = text.trim();
+        } else {
+          errorDetail = `Server returned HTTP ${response.status} (${response.statusText || "Non-JSON response"})`;
+        }
+      } catch {
+        // Failed reading text
+      }
     }
 
-    if (response.status === 401 && !path.startsWith("/auth/login") && !path.startsWith("/auth/signup")) {
+    if (response.status === 401 && !path.includes("/auth/login") && !path.includes("/auth/signup")) {
       // Session expired or invalid
       setStoredToken(null);
       window.dispatchEvent(new Event("recoverly_auth_unauthorized"));
@@ -79,7 +147,20 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(errorDetail);
   }
 
-  return response.json() as Promise<T>;
+  if (!isJson) {
+    let preview = "";
+    try {
+      preview = await response.text();
+    } catch {
+      // ignore
+    }
+    if (preview.includes("<!DOCTYPE") || preview.includes("<html") || preview.includes("<!doctype")) {
+      throw new Error(`Received HTML page instead of JSON API response from ${url}. Check server route registration.`);
+    }
+    throw new Error(`Server returned non-JSON response (Content-Type: ${contentType || "none"})`);
+  }
+
+  return (await response.json()) as T;
 }
 
 // Authentication APIs (Supabase Auth via backend proxy)

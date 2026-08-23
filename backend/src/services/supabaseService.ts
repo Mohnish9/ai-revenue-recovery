@@ -12,9 +12,6 @@ export const databaseTables = [
   "agent_logs",
   "promises_to_pay",
   "audit_logs",
-  "sandbox_incidents",
-  "sandbox_actions",
-  "sandbox_audit_logs",
 ] as const;
 
 // In-memory store starts completely empty (zero fake/demo rows)
@@ -314,25 +311,56 @@ const mockSupabaseClient: any = {
   auth: mockAuth,
 };
 
+function sanitizeSupabaseUrl(raw?: string): string {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  // Extract URL starting with http:// or https://
+  const httpMatch = trimmed.match(/https?:\/\/[^\s"'\`]+/);
+  if (httpMatch) return httpMatch[0];
+  if (trimmed.includes("=")) {
+    const parts = trimmed.split("=");
+    const after = parts[parts.length - 1].trim();
+    const afterMatch = after.match(/https?:\/\/[^\s"'\`]+/);
+    if (afterMatch) return afterMatch[0];
+    return after.replace(/^["'\`]|["'\`]$/g, "");
+  }
+  return trimmed.replace(/^["'\`]|["'\`]$/g, "");
+}
+
+function sanitizeSupabaseKey(raw?: string): string {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  if (trimmed.includes("=")) {
+    const parts = trimmed.split("=");
+    return parts[parts.length - 1].trim().replace(/^["'\`]|["'\`]$/g, "");
+  }
+  return trimmed.replace(/^["'\`]|["'\`]$/g, "");
+}
+
 let client: SupabaseClient | undefined;
 
 export function getSupabaseClient(): SupabaseClient {
   if (client) return client;
-  const url = (process.env.SUPABASE_URL || "").trim();
-  const key = (process.env.SUPABASE_SECRET_KEY || "").trim();
+  const url = sanitizeSupabaseUrl(process.env.SUPABASE_URL);
+  const key = sanitizeSupabaseKey(process.env.SUPABASE_SECRET_KEY);
   if (!url || !key) {
     // Return in-memory mock client when credentials are not configured
     return mockSupabaseClient as unknown as SupabaseClient;
   }
-  client = createClient(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-  return client;
+  try {
+    client = createClient(url, key, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    return client;
+  } catch (err: any) {
+    console.error("[Supabase Error] Failed to initialize Supabase client:", err?.message || err);
+    return mockSupabaseClient as unknown as SupabaseClient;
+  }
 }
 
 export async function getDatabaseStatus() {
-  const url = (process.env.SUPABASE_URL || "").trim();
-  const key = (process.env.SUPABASE_SECRET_KEY || "").trim();
+  const url = sanitizeSupabaseUrl(process.env.SUPABASE_URL);
+  const key = sanitizeSupabaseKey(process.env.SUPABASE_SECRET_KEY);
   if (!url || !key) {
     return {
       connected: true,
@@ -355,6 +383,7 @@ export async function getDatabaseStatus() {
       error: unavailable[0]?.error,
     };
   } catch (error) {
+    console.error("[Supabase Error] Connection status check failed:", error instanceof Error ? error.message : error);
     return {
       connected: false,
       mock: false,

@@ -461,11 +461,19 @@ export interface OutboundDeliveryResult {
   status: "DELIVERED" | "SENT" | "SIMULATED" | "FAILED";
   deliveryLabel: string;
   isRealDispatch: boolean;
-  to: string;
-  recipientName: string;
-  messagePreview: string;
+  to?: string;
+  destination?: string;
+  recipient?: string;
+  recipientName?: string;
+  messagePreview?: string;
   providerMessageId?: string;
-  deliveredAt: string;
+  deliveredAt?: string;
+  dispatchedAt?: string;
+  content?: {
+    subject?: string;
+    body: string;
+    resolvedPaymentUrl?: string;
+  };
   error?: string;
 }
 
@@ -502,15 +510,26 @@ export interface SandboxActionRecord {
   attemptNumber?: number;
   actionType: string;
   actionTitle: string;
+  aiStrategy?: string;
+  aiChannel?: string;
+  selectedChannel?: string;
   status: string;
   gatewayLatency: string;
   pspResponseCode: string;
   projectedRecovery: number;
   operatorName?: string;
   reason?: string;
+  messageGoal?: string;
+  urgency?: string;
+  generatedMessageText?: string;
+  provider?: string;
+  providerStatus?: string;
+  providerMessageId?: string;
   executedAt: string;
   channelDispatches?: OutboundDeliveryResult[];
   details?: string;
+  result?: string;
+  nextDecision?: string;
 }
 
 export interface SandboxIncident {

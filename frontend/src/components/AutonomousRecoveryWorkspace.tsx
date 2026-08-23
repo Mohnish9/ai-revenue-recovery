@@ -22,7 +22,7 @@ export function AutonomousRecoveryWorkspace({
 }: AutonomousRecoveryWorkspaceProps) {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"OUTREACH" | "PROVIDER_DEBUG" | "TIMELINE" | "AI_REASONING" | "CONTEXT">("OUTREACH");
+  const [activeTab, setActiveTab] = useState<"DECISION_TRACE" | "OUTREACH" | "PROVIDER_DEBUG" | "TIMELINE" | "AI_REASONING" | "CONTEXT">("DECISION_TRACE");
   const [selectedChannel, setSelectedChannel] = useState<"WHATSAPP" | "SMS" | "EMAIL">("WHATSAPP");
   const [copiedLink, setCopiedLink] = useState(false);
 
@@ -34,6 +34,21 @@ export function AutonomousRecoveryWorkspace({
 
   // Real-time second-by-second countdown timer
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
+
+  // Collect all actions
+  const allActions = incident.actions || record?.actions || [];
+  const latestAction = allActions[0];
+  const latestChannelDispatches: OutboundDeliveryResult[] = latestAction?.channelDispatches || [];
+
+  // Update selected channel if latest action specified one
+  useEffect(() => {
+    if (latestAction?.selectedChannel) {
+      const ch = String(latestAction.selectedChannel).toUpperCase();
+      if (ch.includes("EMAIL")) setSelectedChannel("EMAIL");
+      else if (ch.includes("SMS")) setSelectedChannel("SMS");
+      else if (ch.includes("WHATSAPP")) setSelectedChannel("WHATSAPP");
+    }
+  }, [latestAction?.selectedChannel]);
 
   useEffect(() => {
     if (
@@ -152,11 +167,7 @@ export function AutonomousRecoveryWorkspace({
     }
   };
 
-  // Collect all channel dispatches across all actions
-  const allActions = incident.actions || record?.actions || [];
-  const latestAction = allActions[0];
-  const latestChannelDispatches: OutboundDeliveryResult[] = latestAction?.channelDispatches || [];
-
+  // Get channel dispatches from latest action
   const whatsappDispatch = latestChannelDispatches.find((c) => c.channel === "WHATSAPP");
   const smsDispatch = latestChannelDispatches.find((c) => c.channel === "SMS");
   const emailDispatch = latestChannelDispatches.find((c) => c.channel === "EMAIL");
@@ -561,10 +572,16 @@ export function AutonomousRecoveryWorkspace({
       {/* ------------------------------------------------------------- */}
       <div className="tabs" style={{ marginBottom: "0" }}>
         <button
+          className={`tab-btn ${activeTab === "DECISION_TRACE" ? "active" : ""}`}
+          onClick={() => setActiveTab("DECISION_TRACE")}
+        >
+          🧠 Autonomous Decision Trace ({allActions.length})
+        </button>
+        <button
           className={`tab-btn ${activeTab === "OUTREACH" ? "active" : ""}`}
           onClick={() => setActiveTab("OUTREACH")}
         >
-          💬 Omnichannel Outreach Preview
+          💬 Channel Outreach Preview
         </button>
         <button
           className={`tab-btn ${activeTab === "PROVIDER_DEBUG" ? "active" : ""}`}
@@ -582,7 +599,7 @@ export function AutonomousRecoveryWorkspace({
           className={`tab-btn ${activeTab === "AI_REASONING" ? "active" : ""}`}
           onClick={() => setActiveTab("AI_REASONING")}
         >
-          🧠 Gemini AI Telemetry & Reasoning
+          🔍 AI Telemetry & Diagnosis
         </button>
         <button
           className={`tab-btn ${activeTab === "CONTEXT" ? "active" : ""}`}
@@ -591,6 +608,237 @@ export function AutonomousRecoveryWorkspace({
           📊 Customer Profile & Telemetry
         </button>
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* TAB 0: AUTONOMOUS DECISION TRACE */}
+      {/* ------------------------------------------------------------- */}
+      {activeTab === "DECISION_TRACE" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "18px 22px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+              <div>
+                <h3 style={{ fontSize: "15px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
+                  Live Autonomous Decision & Reasoning Trace
+                </h3>
+                <p style={{ fontSize: "12px", color: "#64748b", margin: "3px 0 0" }}>
+                  Real-time log of Gemini's dynamic channel selection, strategy reassessment, generated messages, and provider execution outcomes per attempt.
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <span className="status-pill purple" style={{ fontSize: "10.5px" }}>
+                  AI Dynamically Selecting Channels
+                </span>
+                <span className="status-pill info" style={{ fontSize: "10.5px" }}>
+                  3 Bounded Attempts
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {allActions.length === 0 ? (
+            <div style={{ padding: "40px 24px", textAlign: "center", background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "32px", marginBottom: "8px" }}>⏳</div>
+              <h4 style={{ fontSize: "15px", fontWeight: 800, color: "#0f172a", margin: "0 0 6px" }}>
+                Attempt #1 Scheduled • Awaiting Execution
+              </h4>
+              <p style={{ fontSize: "13px", color: "#64748b", maxWidth: "560px", margin: "0 auto 16px" }}>
+                Gemini will dynamically analyze the failure root cause, select the optimal communication channel (Email, WhatsApp, or SMS), and generate personalized recovery copy.
+              </p>
+              {status !== "RECOVERED" && status !== "ESCALATED_TO_HUMAN" && (
+                <button
+                  disabled={loadingAction !== null}
+                  onClick={handleTriggerNow}
+                  className="btn btn-primary"
+                  style={{ background: "#38bdf8", color: "#0f172a", fontWeight: 800, fontSize: "12.5px" }}
+                >
+                  ⚡ Trigger Attempt #1 Now
+                </button>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {allActions.map((act: any, actIdx: number) => {
+                const primaryDispatch: OutboundDeliveryResult | undefined = (act.channelDispatches || [])[0];
+                const channel = (act.selectedChannel || act.aiChannel || primaryDispatch?.channel || "SMS").toUpperCase();
+                const isSent = act.status === "EXECUTED" || primaryDispatch?.status === "SENT" || primaryDispatch?.status === "DELIVERED";
+                const isFailed = act.status === "CHANNEL_EXECUTION_FAILED" || primaryDispatch?.status === "FAILED";
+                const provider = act.provider || (channel === "EMAIL" ? "Resend" : "Twilio");
+                const providerId = act.providerMessageId || primaryDispatch?.providerMessageId;
+
+                const channelIcon = channel === "EMAIL" ? "✉️" : channel === "WHATSAPP" ? "💬" : "📱";
+                const channelColor = channel === "EMAIL" ? "#7c3aed" : channel === "WHATSAPP" ? "#16a34a" : "#2563eb";
+                const channelBg = channel === "EMAIL" ? "#f5f3ff" : channel === "WHATSAPP" ? "#f0fdf4" : "#eff6ff";
+
+                return (
+                  <div
+                    key={act.id || actIdx}
+                    style={{
+                      background: "#ffffff",
+                      borderRadius: "12px",
+                      border: `1.5px solid ${isFailed ? "#fca5a5" : "#e2e8f0"}`,
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {/* Header */}
+                    <div
+                      style={{
+                        background: "#0f172a",
+                        color: "#ffffff",
+                        padding: "12px 20px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: "10px",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <span
+                          style={{
+                            background: "#38bdf8",
+                            color: "#0f172a",
+                            fontWeight: 900,
+                            padding: "3px 9px",
+                            borderRadius: "4px",
+                            fontSize: "11px",
+                            letterSpacing: "0.05em",
+                          }}
+                        >
+                          ATTEMPT #{act.attemptNumber || allActions.length - actIdx} OF 3
+                        </span>
+                        <strong style={{ fontSize: "14px", color: "#f8fafc" }}>
+                          {act.aiStrategy || act.actionType || "Autonomous Intervention"}
+                        </strong>
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <span
+                          style={{
+                            background: channelBg,
+                            color: channelColor,
+                            border: `1px solid ${channelColor}`,
+                            padding: "2px 10px",
+                            borderRadius: "16px",
+                            fontWeight: 800,
+                            fontSize: "11px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                          }}
+                        >
+                          <span>{channelIcon}</span>
+                          <span>AI Selected: {channel}</span>
+                        </span>
+                        <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                          {act.executedAt ? new Date(act.executedAt).toLocaleTimeString() : "Executed"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Trace Body Grid */}
+                    <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "20px" }}>
+                      {/* Left: AI Reasoning & Generated Copy */}
+                      <div>
+                        {/* Why (Reasoning) */}
+                        <div style={{ marginBottom: "14px" }}>
+                          <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "4px" }}>
+                            🧠 Why This Channel & Strategy Was Selected (AI Reasoning)
+                          </div>
+                          <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12.5px", color: "#1e293b", lineHeight: "1.5" }}>
+                            {act.reason || act.details || "AI formulated multi-channel recovery intervention tailored to customer profile."}
+                          </div>
+                        </div>
+
+                        {/* Generated Message Content */}
+                        <div>
+                          <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "4px" }}>
+                            📝 Generated Message Content ({channel})
+                          </div>
+                          <div
+                            style={{
+                              background: "#f1f5f9",
+                              padding: "14px 16px",
+                              borderRadius: "8px",
+                              border: "1px solid #cbd5e1",
+                              fontSize: "12px",
+                              color: "#0f172a",
+                              lineHeight: "1.55",
+                              whiteSpace: "pre-wrap",
+                              fontFamily: "system-ui, sans-serif",
+                            }}
+                          >
+                            {act.generatedMessageText ||
+                              primaryDispatch?.content?.body ||
+                              act.details ||
+                              `Recoverly: Resolve payment of ${incident.incident.currency} ${incident.incident.amount.toLocaleString()} securely: ${resolveUrl}`}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Provider Telemetry & Next Decision */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        {/* Provider Execution Outcome */}
+                        <div style={{ background: "#fafafa", borderRadius: "8px", padding: "14px", border: "1px solid #e2e8f0" }}>
+                          <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase", marginBottom: "8px" }}>
+                            ⚡ Provider Execution Telemetry
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "12px" }}>
+                            <div>
+                              <span style={{ color: "#64748b" }}>Provider:</span>{" "}
+                              <strong>{provider}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: "#64748b" }}>Status:</span>{" "}
+                              <span
+                                className={`status-pill ${isSent ? "success" : isFailed ? "danger" : "info"}`}
+                                style={{ fontSize: "9.5px", padding: "1px 6px" }}
+                              >
+                                {primaryDispatch?.status || act.providerStatus || act.status}
+                              </span>
+                            </div>
+                            <div style={{ gridColumn: "span 2" }}>
+                              <span style={{ color: "#64748b" }}>Provider ID / SID:</span>{" "}
+                              <code style={{ fontSize: "11px", color: providerId ? "#0f172a" : "#94a3b8" }}>
+                                {providerId || (isFailed ? "Failed" : "Simulated Gateway")}
+                              </code>
+                            </div>
+                            {primaryDispatch?.error && (
+                              <div style={{ gridColumn: "span 2", color: "#dc2626", fontSize: "11px", background: "#fef2f2", padding: "6px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
+                                <strong>Provider Error:</strong> {primaryDispatch.error}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Customer Result */}
+                        <div style={{ background: "#fafafa", borderRadius: "8px", padding: "14px", border: "1px solid #e2e8f0" }}>
+                          <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase", marginBottom: "4px" }}>
+                            📊 Recovery Settlement Result
+                          </div>
+                          <div style={{ fontSize: "12.5px", color: status === "RECOVERED" ? "#15803d" : "#475569", fontWeight: 600 }}>
+                            {status === "RECOVERED" ? "✅ 100% RECOVERED & SETTLED" : act.result || "Customer unrecovered — awaiting settlement"}
+                          </div>
+                        </div>
+
+                        {/* Next Decision */}
+                        <div style={{ background: "#f0f9ff", borderRadius: "8px", padding: "14px", border: "1px solid #bae6fd" }}>
+                          <div style={{ fontSize: "11px", fontWeight: 800, color: "#0369a1", textTransform: "uppercase", marginBottom: "4px" }}>
+                            🔄 Next Autonomous Decision
+                          </div>
+                          <div style={{ fontSize: "12px", color: "#0c4a6e", lineHeight: "1.4" }}>
+                            {act.nextDecision || (actIdx === 0 && (act.attemptNumber || 1) < 3 ? `Schedule Attempt #${(act.attemptNumber || 1) + 1} for Gemini dynamic reassessment` : "Cascade complete")}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ------------------------------------------------------------- */}
       {/* TAB 1: OMNICHANNEL OUTBOUND DELIVERY PREVIEWS */}
@@ -926,7 +1174,7 @@ export function AutonomousRecoveryWorkspace({
                                   {cd.channel === "EMAIL" ? "Resend API" : "Twilio REST API"}
                                 </td>
                                 <td style={{ padding: "10px", fontFamily: "monospace", color: "#475569" }}>
-                                  {cd.recipient}
+                                  {cd.destination || cd.recipient || cd.to || "—"}
                                 </td>
                                 <td style={{ padding: "10px" }}>
                                   <span

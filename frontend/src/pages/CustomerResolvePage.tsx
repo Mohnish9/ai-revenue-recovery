@@ -101,7 +101,7 @@ export function CustomerResolvePage({ incidentId }: { incidentId: string }) {
       // Refresh local incident state
       fetchIncident();
     } catch (err: any) {
-      alert(err.message || "Payment submission failed. Please retry.");
+      setError(err.message || "Payment submission failed. Please retry.");
     } finally {
       setResolving(false);
     }
