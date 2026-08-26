@@ -11,7 +11,9 @@ interface TopbarProps {
 
 const pageTitles: Record<PageKey, string> = {
   dashboard: "Overview",
+  "telemetry-queue": "Telemetry Queue",
   recovery: "Recovery Cases",
+  "human-escalations": "Human Escalations",
   "failed-payments": "Failed Payments",
   transactions: "Transactions",
   invoices: "Invoices",

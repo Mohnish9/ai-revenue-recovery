@@ -45,6 +45,11 @@ app.use("/api", (_req, res, next) => {
 // API Routes (must precede SPA fallback)
 app.use("/api", apiRoutes);
 
+// Strict safety boundary: Guarantee that any unhandled /api path returns JSON 404 and never falls through to Vite/SPA HTML
+app.all("/api/*", (_request, response) => {
+  response.status(404).json({ error: "API route not found" });
+});
+
 // In dev mode, attach Vite middleware. In production, serve dist.
 if (process.env.NODE_ENV === "production" && fs.existsSync(distDir)) {
   app.use(express.static(distDir));

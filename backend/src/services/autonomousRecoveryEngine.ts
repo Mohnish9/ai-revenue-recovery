@@ -6,6 +6,7 @@ import {
   sendSmsMessage,
   sendEmailMessage,
 } from "./messagingService.js";
+import { getDetailedChannelReadiness } from "./providerService.js";
 
 export interface StoredActionRecord {
   id: string;
@@ -28,6 +29,9 @@ export interface StoredActionRecord {
   provider?: string;
   providerStatus?: string;
   providerMessageId?: string;
+  providerErrorCode?: string;
+  providerErrorMessage?: string;
+  httpStatus?: number;
   executedAt: string;
   channelDispatches?: OutboundDeliveryResult[];
   details?: string;
@@ -128,6 +132,13 @@ export const persistentSandboxIncidents = new Map<string, StoredSandboxIncident>
 // In-memory active timer handles
 const activeTimers = new Map<string, NodeJS.Timeout>();
 const executingSet = new Set<string>();
+
+export function clearIncidentTimer(incidentId: string) {
+  if (activeTimers.has(incidentId)) {
+    clearTimeout(activeTimers.get(incidentId)!);
+    activeTimers.delete(incidentId);
+  }
+}
 
 // Gemini Helper
 function getGeminiClient(): GoogleGenAI | null {
@@ -297,27 +308,36 @@ export async function executeScheduledAttempt(incidentId: string, attemptNumber:
           .reverse()
           .map((a, idx) => {
             const primaryDispatch = a.channelDispatches?.[0];
+            const ch = (a.selectedChannel || a.aiChannel || primaryDispatch?.channel || "SMS").toUpperCase();
+            const prov = a.provider || (ch === "EMAIL" ? "Resend" : ch === "WHATSAPP" ? "Twilio WhatsApp" : "Twilio SMS");
+            const err = a.providerErrorMessage || primaryDispatch?.providerErrorMessage || primaryDispatch?.error || a.details || "None";
+            const errCode = a.providerErrorCode || primaryDispatch?.providerErrorCode;
             return `[Attempt #${a.attemptNumber || idx + 1}]
-- Strategy Executed: ${a.aiStrategy || a.actionType} (${a.actionTitle})
-- Channel Selected by AI: ${a.selectedChannel || primaryDispatch?.channel || "SMS"}
-- Provider Used: ${a.provider || (primaryDispatch?.channel === "EMAIL" ? "Resend" : "Twilio")}
-- Delivery Status: ${primaryDispatch?.status || a.status}
-- Provider ID / SID: ${primaryDispatch?.providerMessageId || "None"}
-- Delivery Label / Error: ${primaryDispatch?.error || primaryDispatch?.deliveryLabel || a.details || "None"}
-- Time Executed: ${a.executedAt}
+- AI Selected Channel: ${ch}
+- AI Strategy: ${a.aiStrategy || a.actionType}
+- Generated Message Sent: "${a.generatedMessageText || primaryDispatch?.content?.body || "N/A"}"
+- Provider Used: ${prov}
+- Provider Execution Status: ${primaryDispatch?.status || a.status}
+- Provider ID / SID: ${primaryDispatch?.providerMessageId || a.providerMessageId || "None"}
+- Provider Error Code: ${errCode || "None"}
+- Provider Error Details: ${err}
+- Executed Timestamp: ${a.executedAt}
 - Customer Resolution Status: UNRESOLVED (Payment pending)`;
           })
           .join("\n\n")
       : "No previous attempts executed. This is Attempt #1 (Initial Dynamic Intervention).";
 
+    // Compute ground-truth channel readiness for this specific customer contact
+    const readiness = getDetailedChannelReadiness(item.customer_email, item.customer_phone, item.customer_name);
+
     // Reassess with Gemini dynamically for EVERY single attempt (Attempt 1, 2, 3)
     const prompt = `You are Recoverly's Autonomous Revenue Recovery AI Engine.
-You are dynamically formulating and executing Attempt #${attemptNumber} of 3 (Bounded Autonomy Limit) for Incident ${item.id}.
+You are formulating and executing Attempt #${attemptNumber} of 3 (Bounded Autonomy Limit) for Incident ${item.id}.
 
 CURRENT INCIDENT STATE:
-- Problem: "${item.scenario_type_name}" (Category: ${item.category})
+- Problem / Scenario: "${item.scenario_type_name}" (Category: ${item.category})
 - Customer Name: "${item.customer_name}"
-- Customer Email: "${item.customer_email}" (${item.customer_email ? "Available" : "Missing"})
+- Customer Email: "${item.customer_email || "Not provided"}" (${item.customer_email ? "Available" : "Missing"})
 - Customer Phone: "${item.customer_phone || "Not provided"}" (${item.customer_phone ? "Available" : "Missing"})
 - Customer Type: ${item.customer_type}
 - Amount at Risk: ${item.currency} ${item.amount.toLocaleString()}
@@ -327,30 +347,41 @@ CURRENT INCIDENT STATE:
 - Current Settlement Status: UNRESOLVED
 - Customer Resolution Link: ${paymentUrl}
 
-PREVIOUS ATTEMPT HISTORY & PROVIDER OUTCOMES:
+REAL-WORLD CHANNEL READINESS & PROVIDER CAPABILITY TELEMETRY:
+- EMAIL (${item.customer_email || "None"}): Status = ${readiness.email.status} (${readiness.email.deliveryLabel}). Details: ${readiness.email.details}
+- SMS (${item.customer_phone || "None"}): Status = ${readiness.phone.twilio_sms_status} (Ownership: ${readiness.phone.phone_verification_status}). Details: ${readiness.phone.details}
+- WHATSAPP (${item.customer_phone || "None"}): Status = ${readiness.whatsapp.whatsapp_sandbox_status}. Details: ${readiness.whatsapp.details}
+
+PREVIOUS ATTEMPT HISTORY & PROVIDER TELEMETRY:
 ${pastAttemptsHistoryText}
 
-CRITICAL ARCHITECTURAL RULES:
-1. CHANNEL MUST NOT BE FIXED:
-   You must dynamically select the single best channel ("EMAIL", "WHATSAPP", or "SMS") for Attempt #${attemptNumber}.
-   - If Attempt #1 used SMS or WhatsApp and is still unrecovered or failed, evaluate switching to EMAIL or WHATSAPP for Attempt #2.
-   - If a provider had a delivery error in past attempts (e.g., WhatsApp template restrictions), switch to a different reliable channel (e.g., EMAIL or SMS).
-   - Tailor the channel choice to the incident category:
-     * High-value B2B Invoices: EMAIL is often best for formal invoice reconciliation.
-     * Failed Subscriptions / Cards: WHATSAPP or SMS with 1-click update link.
-     * Checkout Abandonment / UPI: WHATSAPP with 1-click UPI intent or SMS.
-2. DYNAMIC FRESH MESSAGE GENERATION:
-   You MUST generate fresh, non-repetitive copy for Attempt #${attemptNumber}. Never reuse a previous attempt's message.
-   - For Attempt 1: Courteous first notification with direct 1-click resolution link.
-   - For Attempt 2: Helpful follow-up explaining the issue and offering alternative payment or assistance.
-   - For Attempt 3: Urgent final notice before account suspension or executive human handoff.
-   - Every generated message MUST include the real customer name (${item.customer_name}), amount (${item.currency} ${item.amount.toLocaleString()}), and resolution link (${paymentUrl}).
+CRITICAL RULES FOR ATTEMPT #${attemptNumber}:
+1. DYNAMIC CHANNEL SELECTION & ADAPTIVE OBSERVATION:
+   - Select the single best channel ("EMAIL", "WHATSAPP", or "SMS") for Attempt #${attemptNumber}.
+   - Factor in the REAL-WORLD CHANNEL READINESS & PROVIDER CAPABILITY TELEMETRY and the PREVIOUS ATTEMPT HISTORY.
+   - If a channel failed at the provider or is restricted (e.g. Resend onboarding@resend.dev recipient block or Twilio unverified caller ID 21608/572006), acknowledge this in your reasoning and dynamically pivot to an alternative deliverable channel.
+   - Do NOT repeat a channel that just experienced a hard provider failure if an alternate channel is available.
+
+2. DYNAMIC INCIDENT-GROUNDED MESSAGE GENERATION:
+   - Every generated message MUST be custom generated specifically for THIS incident:
+     * Customer: ${item.customer_name}
+     * Problem / Scenario: ${item.scenario_type_name}
+     * Failure Reason: ${item.failure_reason}
+     * Amount: ${item.currency} ${item.amount.toLocaleString()}
+     * Payment Method: ${item.payment_method}
+     * Recovery URL: ${paymentUrl}
+   - NEVER output unrelated or generic banking text like "account balance is below $100", "deposit funds to avoid overdraft fees", or generic templates unless this specific incident is explicitly an overdraft scenario.
+   - NO MESSAGE REUSE: Generate fresh, distinct copy for Attempt #${attemptNumber} with progressive urgency.
+   - Channel-specific requirements:
+     * For SMS: Generate a concise, direct SMS mentioning ${item.customer_name}, the ${item.scenario_type_name} issue (${item.currency} ${item.amount.toLocaleString()}), and the recovery link (${paymentUrl}).
+     * For WHATSAPP: Generate a polite conversational message addressing ${item.customer_name}, the payment problem, and 1-click recovery action (${paymentUrl}).
+     * For EMAIL: Generate a tailored subject line and full email body with greeting, specific failure diagnosis for ${item.payment_method}, problem summary, resolution link (${paymentUrl}), and signature.
 
 Respond strictly in valid JSON matching this schema:
 {
   "recommendedAction": "One of: PAYMENT_LINK | CARD_UPDATE | SMART_RETRY | MANDATE_REAUTHORIZE | CHECKOUT_RECOVERY | INVOICE_REMINDER | RETENTION_OUTREACH | ESCALATION",
   "recommendedChannel": "EMAIL" | "WHATSAPP" | "SMS",
-  "reason": "Clear AI reasoning explaining why this channel and strategy was chosen for Attempt #${attemptNumber} based on past attempt feedback.",
+  "reason": "Clear AI reasoning explaining why this channel and strategy was selected for Attempt #${attemptNumber} based on past attempt feedback and deliverability.",
   "messageGoal": "Tactical objective of this specific attempt",
   "urgency": "LOW" | "MEDIUM" | "HIGH" | "FINAL_NOTICE",
   "customerContext": "Key takeaway about customer profile and contact strategy",
@@ -358,11 +389,10 @@ Respond strictly in valid JSON matching this schema:
   "fallbackChannel": "EMAIL" | "WHATSAPP" | "SMS",
   "shouldEscalate": false,
   "generatedMessage": {
-    "channel": "EMAIL" | "WHATSAPP" | "SMS",
-    "smsText": "Concise SMS text containing ${item.customer_name}, ${item.currency} ${item.amount.toLocaleString()}, and ${paymentUrl}",
-    "whatsappText": "Courteous WhatsApp message containing ${item.customer_name}, ${item.currency} ${item.amount.toLocaleString()}, failure reason, and ${paymentUrl}",
-    "emailSubject": "High-converting email subject line",
-    "emailBody": "Professional personalized email body containing customer greeting, clear summary of ${item.currency} ${item.amount.toLocaleString()} for ${item.payment_method}, failure reason ${item.failure_reason}, resolution link ${paymentUrl}, and formal signature."
+    "smsText": "Concise SMS text customized for ${item.customer_name} regarding ${item.scenario_type_name} of ${item.currency} ${item.amount.toLocaleString()} and ${paymentUrl}",
+    "whatsappText": "Courteous WhatsApp text customized for ${item.customer_name} regarding ${item.scenario_type_name} of ${item.currency} ${item.amount.toLocaleString()} and ${paymentUrl}",
+    "emailSubject": "Personalized email subject line for ${item.customer_name}",
+    "emailBody": "Personalized email body for ${item.customer_name} referencing ${item.scenario_type_name} for ${item.currency} ${item.amount.toLocaleString()} and ${paymentUrl}"
   },
   "recoveryProbability": 0.82,
   "pspResponseCode": "AUTH_200_OK"
@@ -383,7 +413,7 @@ Respond strictly in valid JSON matching this schema:
               config: {
                 responseMimeType: "application/json",
                 systemInstruction:
-                  "You are an elite autonomous fintech revenue operations and multi-channel payment recovery AI specialist. Make intelligent, distinct, and non-repeating channel and strategy selections for each attempt.",
+                  "You are an elite autonomous fintech revenue operations and multi-channel payment recovery AI specialist. Make intelligent, distinct, and non-repeating channel and strategy selections for each attempt. Ground all messages strictly in the specific customer and incident details provided.",
               },
             });
             if (response.text) {
@@ -402,9 +432,9 @@ Respond strictly in valid JSON matching this schema:
       console.warn("[AutonomousEngine] Gemini dynamic attempt assessment error:", err);
     }
 
-    // Algorithmic dynamic fallback if Gemini fails, ensuring distinct channel selection across attempts
+    // Dynamic fallback if Gemini is unreachable, strictly grounded in the current incident scenario
     if (!aiDecision || !aiDecision.recommendedChannel) {
-      const prevChannels = item.actions.map((a) => a.selectedChannel).filter(Boolean);
+      const prevChannels = item.actions.map((a) => (a.selectedChannel || a.aiChannel)).filter(Boolean);
       let selectedChannel: "EMAIL" | "WHATSAPP" | "SMS" = "WHATSAPP";
       let recommendedAction = "PAYMENT_LINK";
       let reason = `Attempt #${attemptNumber}: Autonomous dynamic recovery cascade.`;
@@ -413,20 +443,48 @@ Respond strictly in valid JSON matching this schema:
       if (attemptNumber === 1) {
         selectedChannel = item.customer_phone ? "WHATSAPP" : "EMAIL";
         recommendedAction = "PAYMENT_LINK";
-        reason = `Attempt #1: Immediate 1-click notification on primary mobile channel.`;
+        reason = `Attempt #1: Immediate 1-click notification on primary mobile channel (${selectedChannel}).`;
         urgency = "LOW";
       } else if (attemptNumber === 2) {
-        // Switch channel if Attempt 1 was WhatsApp/SMS, try Email
         selectedChannel = prevChannels.includes("EMAIL") ? "SMS" : "EMAIL";
         recommendedAction = "INVOICE_REMINDER";
-        reason = `Attempt #2: Dynamic omnichannel shift to ${selectedChannel} for enhanced deliverability.`;
+        reason = `Attempt #2: Dynamic omnichannel shift to ${selectedChannel} following Attempt #1 provider telemetry.`;
         urgency = "MEDIUM";
       } else {
         selectedChannel = "SMS";
         recommendedAction = "RETENTION_OUTREACH";
-        reason = `Attempt #3: Final urgent notice with retention grace period prior to human escalation.`;
+        reason = `Attempt #3: Final urgent notice via SMS prior to human escalation.`;
         urgency = "FINAL_NOTICE";
       }
+
+      // Dynamic incident-grounded copy for each attempt tier
+      const fallbackSms =
+        attemptNumber === 1
+          ? `Hi ${item.customer_name}, your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} needs attention (${item.failure_reason}). Complete recovery here: ${paymentUrl}`
+          : attemptNumber === 2
+          ? `Hi ${item.customer_name}, follow-up on your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()}. Please update details here: ${paymentUrl}`
+          : `Final Notice for ${item.customer_name}: Your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} is pending. Resolve now: ${paymentUrl}`;
+
+      const fallbackWhatsApp =
+        attemptNumber === 1
+          ? `Hi ${item.customer_name}, we noticed an issue completing your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} on ${item.payment_method} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`
+          : attemptNumber === 2
+          ? `Hi ${item.customer_name}, quick follow-up regarding your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()}. To prevent service interruption, please update your payment details here: ${paymentUrl}`
+          : `Hi ${item.customer_name}, final notice for your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()}. Please complete settlement now to avoid account suspension: ${paymentUrl}`;
+
+      const fallbackEmailSub =
+        attemptNumber === 1
+          ? `Action Required: Resolve your ${item.scenario_type_name} payment (${item.currency} ${item.amount.toLocaleString()})`
+          : attemptNumber === 2
+          ? `Follow-up: Update payment method for ${item.customer_name} (${item.currency} ${item.amount.toLocaleString()})`
+          : `Final Notice: Outstanding ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()}`;
+
+      const fallbackEmailBody =
+        attemptNumber === 1
+          ? `Dear ${item.customer_name},\n\nWe encountered a processing issue with your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} on ${item.payment_method}.\n\nReason: ${item.failure_reason}\n\nPlease complete your payment securely via our portal:\n${paymentUrl}\n\nBest regards,\nRecoverly Autonomous Operations`
+          : attemptNumber === 2
+          ? `Dear ${item.customer_name},\n\nThis is a follow-up regarding the outstanding ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}).\n\nTo ensure continuity, please complete payment using the secure link below:\n${paymentUrl}\n\nThank you,\nRecoverly Operations Team`
+          : `Dear ${item.customer_name},\n\nThis is the final notice regarding your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()}.\n\nUnless completed immediately via ${paymentUrl}, this incident will be escalated for manual operations review.\n\nSincerely,\nRecoverly Operations`;
 
       aiDecision = {
         recommendedAction,
@@ -440,12 +498,12 @@ Respond strictly in valid JSON matching this schema:
         shouldEscalate: attemptNumber >= 3,
         generatedMessage: {
           channel: selectedChannel,
-          whatsapp: `Hi ${item.customer_name}, we noticed an issue with your payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`,
-          whatsappText: `Hi ${item.customer_name}, we noticed an issue with your payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`,
-          sms: `Recoverly: Resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: ${paymentUrl}`,
-          smsText: `Recoverly: Resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: ${paymentUrl}`,
-          emailSubject: `Action Required: Payment Resolution for ${item.customer_name} (${item.currency} ${item.amount.toLocaleString()})`,
-          emailBody: `Dear ${item.customer_name},\n\nWe encountered a temporary processing issue for your payment of ${item.currency} ${item.amount.toLocaleString()} on ${item.payment_method}.\n\nReason: ${item.failure_reason}\n\nPlease complete payment securely via our portal:\n${paymentUrl}\n\nBest regards,\nRecoverly Autonomous Operations`,
+          whatsapp: fallbackWhatsApp,
+          whatsappText: fallbackWhatsApp,
+          sms: fallbackSms,
+          smsText: fallbackSms,
+          emailSubject: fallbackEmailSub,
+          emailBody: fallbackEmailBody,
         },
         recoveryProbability: attemptNumber === 1 ? 0.85 : attemptNumber === 2 ? 0.74 : 0.62,
         pspResponseCode: "OUTREACH_DISPATCHED_200",
@@ -467,19 +525,19 @@ Respond strictly in valid JSON matching this schema:
     const waBody =
       genMsg.whatsappText ||
       genMsg.whatsapp ||
-      `Hi ${item.customer_name}, we noticed an issue with your payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`;
+      `Hi ${item.customer_name}, we noticed an issue completing your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Tap here to resolve securely: ${paymentUrl}`;
     const smsBody =
       genMsg.smsText ||
       genMsg.sms ||
-      `Recoverly: Resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: ${paymentUrl}`;
+      `Hi ${item.customer_name}, your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} needs attention (${item.failure_reason}). Complete recovery here: ${paymentUrl}`;
     const emailSubject =
       genMsg.emailSubject ||
       (genMsg.email && genMsg.email.subject) ||
-      `Action Required: Resolving payment of ${item.currency} ${item.amount.toLocaleString()}`;
+      `Action Required: Resolve your ${item.scenario_type_name} payment (${item.currency} ${item.amount.toLocaleString()})`;
     const emailBody =
       genMsg.emailBody ||
       (genMsg.email && genMsg.email.body) ||
-      `Dear ${item.customer_name},\n\nWe encountered an issue processing your payment of ${item.currency} ${item.amount.toLocaleString()} for ${item.payment_method}.\n\nReason: ${item.failure_reason}\n\nPlease click below to complete your payment:\n${paymentUrl}\n\nThank you,\nRecoverly Operations`;
+      `Dear ${item.customer_name},\n\nWe encountered a processing issue with your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} on ${item.payment_method}.\n\nReason: ${item.failure_reason}\n\nPlease click below to complete your payment:\n${paymentUrl}\n\nThank you,\nRecoverly Operations`;
 
     // EXECUTE ONLY THE AI-SELECTED CHANNEL
     let primaryDispatch: OutboundDeliveryResult;
@@ -499,6 +557,8 @@ Respond strictly in valid JSON matching this schema:
         messageBody: waBody,
         incidentId: item.id,
         paymentUrl,
+        amount: `${item.currency} ${item.amount.toLocaleString()}`,
+        incidentContext: `${item.scenario_type_name} (${item.failure_reason})`,
       });
     } else {
       primaryDispatch = await sendSmsMessage({
@@ -507,6 +567,8 @@ Respond strictly in valid JSON matching this schema:
         messageBody: smsBody,
         incidentId: item.id,
         paymentUrl,
+        amount: `${item.currency} ${item.amount.toLocaleString()}`,
+        incidentContext: `${item.scenario_type_name} (${item.failure_reason})`,
       });
     }
 
@@ -523,8 +585,11 @@ Respond strictly in valid JSON matching this schema:
 
     const isSuccess = primaryDispatch.status === "SENT" || primaryDispatch.status === "DELIVERED" || primaryDispatch.status === "SIMULATED";
     const providerStatus = primaryDispatch.status;
-    const providerName = primaryDispatch.channel === "EMAIL" ? "Resend" : "Twilio";
+    const providerName = primaryDispatch.channel === "EMAIL" ? "Resend" : (chosenChannel === "WHATSAPP" ? "Twilio WhatsApp" : "Twilio SMS");
     const providerId = primaryDispatch.providerMessageId || undefined;
+    const providerErrorCode = primaryDispatch.providerErrorCode;
+    const providerErrorMessage = primaryDispatch.providerErrorMessage || primaryDispatch.error;
+    const httpStatus = primaryDispatch.httpStatus;
 
     const actionRecord: StoredActionRecord = {
       id: `act-att-${attemptNumber}-${Date.now().toString().slice(-4)}`,
@@ -547,16 +612,21 @@ Respond strictly in valid JSON matching this schema:
       provider: providerName,
       providerStatus,
       providerMessageId: providerId,
+      providerErrorCode,
+      providerErrorMessage,
+      httpStatus,
       executedAt: now.toISOString(),
       channelDispatches,
       details: isSuccess
-        ? `Dispatched ${chosenChannel} via ${providerName} (${primaryDispatch.deliveryLabel}). ID: ${providerId || "Simulated"}. Awaiting customer resolution.`
-        : `Channel execution failed: ${primaryDispatch.error || primaryDispatch.deliveryLabel}. Provider feedback recorded for Gemini Attempt #${attemptNumber + 1}.`,
-      result: "Customer unrecovered — awaiting resolution or next cadence trigger",
+        ? `Dispatched ${chosenChannel} via ${providerName} (${primaryDispatch.deliveryLabel}). SID / ID: ${providerId || "Simulated"}. Awaiting customer resolution.`
+        : `${chosenChannel} FAILED via ${providerName}. ${providerErrorCode ? `Error Code: ${providerErrorCode}. ` : ""}Reason: ${providerErrorMessage || primaryDispatch.error}. Provider feedback recorded for Gemini Attempt #${attemptNumber + 1}.`,
+      result: isSuccess
+        ? "Message dispatched to customer — awaiting settlement"
+        : `${chosenChannel} delivery failed at provider (${providerErrorCode || "ERROR"}). Escalating to alternate channel.`,
       nextDecision:
         attemptNumber < 3
           ? `Schedule Attempt #${attemptNumber + 1} at T+5m for Gemini dynamic channel reassessment`
-          : "Autonomous limit reached — Escalate to VIP Revenue Operations Specialist",
+          : "Autonomous limit reached (3 attempts) — Escalate to VIP Revenue Operations Specialist",
     };
 
     item.actions.unshift(actionRecord);
@@ -582,6 +652,9 @@ Respond strictly in valid JSON matching this schema:
         provider: actionRecord.provider,
         providerStatus: actionRecord.providerStatus,
         providerId: actionRecord.providerMessageId,
+        providerErrorCode: actionRecord.providerErrorCode,
+        providerErrorMessage: actionRecord.providerErrorMessage,
+        httpStatus: actionRecord.httpStatus,
         generatedMessage: actionRecord.generatedMessageText,
       },
     });

@@ -87,7 +87,7 @@ export function Dashboard({ onNavigate, onSelectCase }: DashboardProps) {
       ) : (
         <>
           {/* Key Metrics Grid */}
-          <div className="metrics-grid">
+          <div className="metrics-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
             <div className="metric-card">
               <div className="metric-icon orange">↗</div>
               <span className="metric-label">Revenue at Risk</span>
@@ -100,6 +100,26 @@ export function Dashboard({ onNavigate, onSelectCase }: DashboardProps) {
               <span className="metric-label">Open Recovery Cases</span>
               <strong>{summary?.openRecoveryCases || 0}</strong>
               <small>Requires smart retry or dunning action</small>
+            </div>
+
+            <div
+              className="metric-card"
+              style={{ cursor: "pointer", border: (summary?.totalEscalated || 0) > 0 ? "1px solid #fecdd3" : undefined }}
+              onClick={() => onNavigate("human-escalations")}
+            >
+              <div className="metric-icon" style={{ background: "#ffe4e6", color: "#e11d48" }}>👤</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span className="metric-label">Human Escalations</span>
+                {(summary?.totalEscalated || 0) > 0 && (
+                  <span style={{ fontSize: "10px", background: "#ffe4e6", color: "#e11d48", padding: "1px 6px", borderRadius: "10px", fontWeight: 700 }}>
+                    ACTION REQUIRED
+                  </span>
+                )}
+              </div>
+              <strong style={{ color: (summary?.totalEscalated || 0) > 0 ? "#e11d48" : undefined }}>
+                {summary?.totalEscalated || 0}
+              </strong>
+              <small>Handoff after bounded 3 AI retries →</small>
             </div>
 
             <div className="metric-card">
@@ -124,47 +144,33 @@ export function Dashboard({ onNavigate, onSelectCase }: DashboardProps) {
               <div className="panel-heading" style={{ padding: "0 0 14px", borderBottom: "1px solid #edf1f4" }}>
                 <div>
                   <h2>Recovery Channel Efficiency</h2>
-                  <p>Success distribution by retry mechanism</p>
+                  <p>Dynamic execution metrics aggregated across active channels</p>
                 </div>
-                <span className="status-pill success">Live Engine</span>
+                <span className="status-pill success">Live Database Sync</span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "16px" }}>
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11.5px", marginBottom: "5px" }}>
-                    <span>Instant WhatsApp / SMS Payment Links</span>
-                    <strong>84% recovery</strong>
+                {(summary?.channelEfficiency && summary.channelEfficiency.length > 0) ? (
+                  summary.channelEfficiency.map((ch, idx) => {
+                    const colors = ["#22c55e", "#3b82f6", "#f97316", "#8b5cf6"];
+                    const color = colors[idx % colors.length];
+                    const rate = ch.successRate !== null ? ch.successRate : (ch.attemptsCount > 0 ? Math.round((ch.successCount / ch.attemptsCount) * 100) : 0);
+                    return (
+                      <div key={ch.channel}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11.5px", marginBottom: "5px" }}>
+                          <span>{ch.label} ({ch.attemptsCount} dispatched)</span>
+                          <strong>{ch.attemptsCount > 0 ? `${rate}% recovery (${ch.successCount} paid)` : "Ready for dispatch"}</strong>
+                        </div>
+                        <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "4px", overflow: "hidden" }}>
+                          <div style={{ width: `${Math.max(ch.attemptsCount > 0 ? rate : 0, 3)}%`, height: "100%", background: color, borderRadius: "4px", transition: "width 0.3s ease" }}></div>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div style={{ fontSize: "12px", color: "#64748b", padding: "12px 0" }}>
+                    No channel dispatches logged in this cycle yet. Autonomous agent will update live.
                   </div>
-                  <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "4px", overflow: "hidden" }}>
-                    <div style={{ width: "84%", height: "100%", background: "#22c55e", borderRadius: "4px" }}></div>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11.5px", marginBottom: "5px" }}>
-                    <span>Dynamic Smart Card Retries (Cascade)</span>
-                    <strong>72% recovery</strong>
-                  </div>
-                  <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "4px", overflow: "hidden" }}>
-                    <div style={{ width: "72%", height: "100%", background: "#3b82f6", borderRadius: "4px" }}></div>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11.5px", marginBottom: "5px" }}>
-                    <span>Promise to Pay Commitments</span>
-                    <strong>91% adherence</strong>
-                  </div>
-                  <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "4px", overflow: "hidden" }}>
-                    <div style={{ width: "91%", height: "100%", background: "#8b5cf6", borderRadius: "4px" }}></div>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11.5px", marginBottom: "5px" }}>
-                    <span>Recurring UPI AutoPay Retries</span>
-                    <strong>65% recovery</strong>
-                  </div>
-                  <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "4px", overflow: "hidden" }}>
-                    <div style={{ width: "65%", height: "100%", background: "#f97316", borderRadius: "4px" }}></div>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
 
@@ -173,7 +179,7 @@ export function Dashboard({ onNavigate, onSelectCase }: DashboardProps) {
               <div className="panel-heading" style={{ padding: "0 0 14px", borderBottom: "1px solid #edf1f4" }}>
                 <div>
                   <h2>Operational Actions</h2>
-                  <p>Instant triggers for high-impact recovery</p>
+                  <p>Direct routes to specialized recovery workspaces</p>
                 </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginTop: "16px" }}>
@@ -210,6 +216,90 @@ export function Dashboard({ onNavigate, onSelectCase }: DashboardProps) {
                   <span style={{ fontSize: "10.5px", color: "#64748b" }}>Configure automated dunning</span>
                 </button>
               </div>
+            </div>
+          </div>
+
+          {/* 9-Scenario Recovery Distribution Table */}
+          <div className="panel" style={{ marginBottom: "22px" }}>
+            <div className="panel-heading">
+              <div>
+                <h2>Scenario Recovery Overview</h2>
+                <p>Complete status across all 9 payment and lifecycle failure archetypes</p>
+              </div>
+              <button className="outline-button" style={{ fontSize: "11px" }} onClick={() => onNavigate("recovery-demo")}>
+                Launch Scenario Lab <span>→</span>
+              </button>
+            </div>
+            <div className="data-table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Scenario Archetype</th>
+                    <th>Category</th>
+                    <th>Incidents</th>
+                    <th>Active</th>
+                    <th>Recovered</th>
+                    <th>Escalated</th>
+                    <th>Revenue at Risk</th>
+                    <th>Recovered Revenue</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(summary?.scenarioBreakdown || []).map((sc) => (
+                    <tr key={sc.key}>
+                      <td>
+                        <strong>{sc.name}</strong>
+                      </td>
+                      <td>
+                        <span className="status-pill blue" style={{ fontSize: "10px" }}>{sc.category}</span>
+                      </td>
+                      <td>
+                        <strong>{sc.incidentsCount}</strong>
+                      </td>
+                      <td>
+                        {sc.activeCount > 0 ? (
+                          <span className="status-pill warning" style={{ fontSize: "10.5px" }}>{sc.activeCount} open</span>
+                        ) : (
+                          <span style={{ color: "#94a3b8" }}>0</span>
+                        )}
+                      </td>
+                      <td>
+                        {sc.recoveredCount > 0 ? (
+                          <span className="status-pill success" style={{ fontSize: "10.5px" }}>{sc.recoveredCount} paid</span>
+                        ) : (
+                          <span style={{ color: "#94a3b8" }}>0</span>
+                        )}
+                      </td>
+                      <td>
+                        {sc.escalatedCount > 0 ? (
+                          <span className="status-pill danger" style={{ fontSize: "10.5px" }}>{sc.escalatedCount} escalated</span>
+                        ) : (
+                          <span style={{ color: "#94a3b8" }}>0</span>
+                        )}
+                      </td>
+                      <td>
+                        <strong style={{ color: sc.amountAtRisk > 0 ? "#b91c1c" : "#64748b" }}>
+                          ₹{Number(sc.amountAtRisk).toLocaleString()}
+                        </strong>
+                      </td>
+                      <td>
+                        <strong style={{ color: sc.amountRecovered > 0 ? "#15803d" : "#64748b" }}>
+                          ₹{Number(sc.amountRecovered).toLocaleString()}
+                        </strong>
+                      </td>
+                      <td>
+                        <button
+                          className="table-action-button"
+                          onClick={() => onNavigate("recovery")}
+                        >
+                          View Cases
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 

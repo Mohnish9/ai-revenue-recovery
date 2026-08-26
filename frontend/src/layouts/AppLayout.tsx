@@ -11,6 +11,7 @@ interface AppLayoutProps {
   onRefresh?: () => void;
   refreshing?: boolean;
   openCasesCount?: number;
+  openEscalatedCount?: number;
   children: React.ReactNode;
 }
 
@@ -23,6 +24,7 @@ export function AppLayout({
   onRefresh,
   refreshing,
   openCasesCount = 0,
+  openEscalatedCount = 0,
   children,
 }: AppLayoutProps) {
   return (
@@ -32,6 +34,7 @@ export function AppLayout({
         menuOpen={menuOpen}
         onNavigate={onNavigate}
         openCasesCount={openCasesCount}
+        openEscalatedCount={openEscalatedCount}
       />
       {menuOpen && <button className="scrim" aria-label="Close navigation" onClick={onCloseMenu} />}
       <main className="main-content">

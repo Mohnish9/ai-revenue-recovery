@@ -6,6 +6,27 @@ import {
   sendSmsMessage,
   sendEmailMessage,
 } from "./messagingService.js";
+import {
+  persistentSandboxIncidents,
+  mapStoredIncidentToResponse,
+  clearIncidentTimer,
+  scheduleAutonomousAttempt,
+  executeScheduledAttempt,
+  markSandboxIncidentPaid,
+  customerResolveIncident,
+  triggerScheduledAttemptNow,
+  cancelScheduledRecovery,
+} from "./autonomousRecoveryEngine.js";
+
+export {
+  persistentSandboxIncidents,
+  scheduleAutonomousAttempt,
+  executeScheduledAttempt,
+  markSandboxIncidentPaid,
+  customerResolveIncident,
+  triggerScheduledAttemptNow,
+  cancelScheduledRecovery,
+};
 
 const defaultLimit = 50;
 const maxLimit = 200;
@@ -182,14 +203,150 @@ export async function listRecoveryCases(limit: number, status?: string, priority
   let query = getSupabaseClient().from("recovery_cases").select("*, customers(*)").order("created_at", { ascending: false }).limit(limit);
   if (status) query = query.eq("status", status);
   if (priority) query = query.eq("priority", priority);
-  return requireResult(await query) ?? [];
+  const dbCases = requireResult(await query) ?? [];
+
+  // Also include sandbox incidents if DB cases are few or for unified view
+  const sandboxItems = Array.from(persistentSandboxIncidents.values());
+  const convertedSandboxCases = sandboxItems.map((sb) => ({
+    id: sb.id,
+    customer_id: sb.customer_id,
+    case_type: sb.scenario_type_name || sb.tag || "PAYMENT_DISRUPTION",
+    amount_at_risk: sb.amount,
+    currency: sb.currency || "INR",
+    status: sb.status || "ACTIVE",
+    priority: sb.priority || sb.severity || "HIGH",
+    reason: sb.failure_reason,
+    assigned_to: "Autonomous AI Agent",
+    created_at: sb.created_at,
+    updated_at: sb.updated_at,
+    customers: {
+      id: sb.customer_id,
+      name: sb.customer_name,
+      email: sb.customer_email,
+      phone: sb.customer_phone || "",
+      customer_type: sb.customer_type || "INDIVIDUAL",
+    },
+    isSandbox: true,
+  }));
+
+  // Merge and deduplicate
+  const existingIds = new Set(dbCases.map((c: any) => c.id));
+  const combined = [...dbCases];
+  for (const sc of convertedSandboxCases) {
+    if (!existingIds.has(sc.id)) {
+      if (status && sc.status !== status) continue;
+      if (priority && sc.priority !== priority) continue;
+      combined.push(sc);
+      existingIds.add(sc.id);
+    }
+  }
+
+  return combined.slice(0, limit);
 }
 
 export async function getRecoveryCase(id: string) {
   const supabase = getSupabaseClient();
   const caseResult = await supabase.from("recovery_cases").select("*, customers(*)").eq("id", id).maybeSingle();
   const recoveryCase = requireResult(caseResult);
-  if (!recoveryCase) return null;
+
+  if (!recoveryCase) {
+    // Check if ID corresponds to a persistent Sandbox Incident
+    let sb = persistentSandboxIncidents.get(id);
+    if (!sb) {
+      // Check sandbox_incidents table in Supabase
+      const { data: dbSb } = await supabase.from("sandbox_incidents").select("*").eq("id", id).maybeSingle();
+      if (dbSb) {
+        const meta = dbSb.metadata || {};
+        sb = {
+          id: dbSb.id,
+          label: "DEMO/SANDBOX — NO PRODUCTION DB IMPACT",
+          isSandbox: true,
+          scenario_type: dbSb.scenario_type || "insufficient-funds",
+          scenario_type_name: dbSb.scenario_type || "Payment Disruption",
+          tag: (dbSb.scenario_type || "INSUFFICIENT_FUNDS").toUpperCase().replace(/-/g, "_"),
+          category: "CARDS",
+          customer_id: dbSb.customer_id || `cust_${dbSb.id}`,
+          customer_name: meta.customer_name || "Account Holder",
+          customer_email: meta.customer_email || "customer@example.test",
+          customer_phone: meta.customer_phone || "",
+          customer_type: meta.customer_type || "INDIVIDUAL",
+          amount: Number(dbSb.amount) || 5000,
+          currency: dbSb.currency || "INR",
+          payment_method: dbSb.payment_method || "CARD",
+          payment_rail: "Visa / Mastercard",
+          failure_reason: dbSb.failure_reason || "Card processor decline",
+          billing_context: typeof meta.billing_context === "string" ? meta.billing_context : JSON.stringify(meta.billing_context || {}),
+          severity: meta.severity || "HIGH",
+          priority: meta.severity || "HIGH",
+          status: dbSb.status || "ACTIVE",
+          customer_context: {
+            transactionsCount: 1,
+            invoicesCount: 1,
+            subscriptionsCount: 1,
+            recoveryCasesCount: 1,
+            paymentEventsCount: 1,
+            sampleTransactions: [],
+            sampleInvoices: [],
+            sampleSubscriptions: [],
+          },
+          analysis: meta.analysis || null,
+          lifecycle: [],
+          actions: meta.actions || [],
+          created_at: dbSb.created_at || new Date().toISOString(),
+          updated_at: dbSb.updated_at || new Date().toISOString(),
+        };
+      }
+    }
+
+    if (!sb) {
+      return null;
+    }
+
+    // Format Sandbox Incident into FullRecoveryCaseDetails
+    return {
+      case: {
+        id: sb.id,
+        customer_id: sb.customer_id,
+        case_type: sb.scenario_type_name || sb.tag || "PAYMENT_DISRUPTION",
+        amount_at_risk: sb.amount,
+        currency: sb.currency || "INR",
+        status: sb.status || "ACTIVE",
+        priority: sb.priority || sb.severity || "HIGH",
+        reason: sb.failure_reason,
+        assigned_to: "Autonomous AI Agent",
+        created_at: sb.created_at,
+        updated_at: sb.updated_at,
+        customers: {
+          id: sb.customer_id,
+          name: sb.customer_name,
+          email: sb.customer_email,
+          phone: sb.customer_phone || "",
+          customer_type: sb.customer_type || "INDIVIDUAL",
+        },
+      },
+      transactionContext: null,
+      invoiceContext: null,
+      actions: (sb.actions || []).map((a: any) => ({
+        id: a.id,
+        recovery_case_id: sb.id,
+        action_type: a.actionType || "DISPATCH_COMMUNICATION",
+        status: a.status || "EXECUTED",
+        result: a.result || a.details || "Dispatched successfully",
+        created_at: a.executedAt || new Date().toISOString(),
+      })),
+      promiseToPay: null,
+      paymentEvents: [],
+      auditLogs: (sb.timeline || []).map((t: any) => ({
+        id: t.id,
+        recovery_case_id: sb.id,
+        actor_type: "AI_AGENT",
+        event: t.title,
+        details: { description: t.description, status: t.status },
+        created_at: t.timestamp || new Date().toISOString(),
+      })),
+      agentLogs: [],
+    };
+  }
 
   const [transaction, invoice, actions, promise, events, audit, agent] = await Promise.all([
     recoveryCase.source_event_id
@@ -983,26 +1140,23 @@ interface StoredSandboxIncident {
   updated_at: string;
 }
 
-export {
-  persistentSandboxIncidents,
-  scheduleAutonomousAttempt,
-  executeScheduledAttempt,
-  markSandboxIncidentPaid,
-  customerResolveIncident,
-  triggerScheduledAttemptNow,
-  cancelScheduledRecovery,
-} from "./autonomousRecoveryEngine.js";
-import {
-  persistentSandboxIncidents,
-  scheduleAutonomousAttempt,
-  mapStoredIncidentToResponse,
-} from "./autonomousRecoveryEngine.js";
-
 export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
   const supabase = getSupabaseClient();
+  const rawKey = (
+    input.scenarioTypeKey ||
+    (input as any).scenarioType ||
+    (input as any).scenario_type ||
+    ""
+  ).toLowerCase().replace(/_/g, "-");
+
   const typeConfig =
-    RECOVERY_SCENARIO_TYPES.find((t) => t.key === input.scenarioTypeKey) ||
-    RECOVERY_SCENARIO_TYPES[0];
+    RECOVERY_SCENARIO_TYPES.find(
+      (t) =>
+        t.key === input.scenarioTypeKey ||
+        t.key === rawKey ||
+        t.tag === (input as any).scenarioType ||
+        t.name.toLowerCase() === rawKey
+    ) || RECOVERY_SCENARIO_TYPES[0];
 
   const randTag = Math.random().toString(36).substring(2, 7).toUpperCase();
   const timeSuffix = Date.now().toString().slice(-4);
@@ -1014,7 +1168,7 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
   const paymentMethod = input.paymentMethod || typeConfig.defaultPaymentMethod;
   const paymentRail = input.paymentRail || typeConfig.category;
   const failureReason = input.failureCode || input.failureReason || typeConfig.defaultFailureCode;
-  const billingContext = input.billingContext || typeConfig.sampleBillingContext;
+  const billingContext = typeof input.billingContext === "string" ? input.billingContext : (input.billingContext ? JSON.stringify(input.billingContext) : typeConfig.sampleBillingContext);
 
   // Resolve customer and load ground-truth telemetry
   let customer: any = null;
@@ -1024,7 +1178,17 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
   let cases: any[] = [];
   let events: any[] = [];
 
-  if (input.customerId) {
+  // If customer details were passed directly on input
+  if ((input as any).customerName) {
+    customer = {
+      id: `sb-cust-${randTag.toLowerCase()}`,
+      name: (input as any).customerName,
+      email: (input as any).customerEmail || "customer@example.test",
+      phone: (input as any).customerPhone || "",
+      customer_type: (input as any).customerType || "INDIVIDUAL",
+      created_at: new Date().toISOString(),
+    };
+  } else if (input.customerId) {
     const { data: custRecord } = await supabase
       .from("customers")
       .select("*")
@@ -1188,6 +1352,15 @@ export async function listSandboxIncidents(filters?: {
   category?: string;
   limit?: number;
 }) {
+  if (persistentSandboxIncidents.size === 0) {
+    try {
+      const { initializeTelemetryDemoQueue } = await import("./telemetryService.js");
+      await initializeTelemetryDemoQueue();
+    } catch {
+      // Non-blocking
+    }
+  }
+
   const all = Array.from(persistentSandboxIncidents.values());
   let filtered = all;
 
@@ -1211,7 +1384,25 @@ export async function listSandboxIncidents(filters?: {
 }
 
 export async function getSandboxIncident(id: string) {
-  const item = persistentSandboxIncidents.get(id);
+  if (persistentSandboxIncidents.size === 0) {
+    try {
+      const { initializeTelemetryDemoQueue } = await import("./telemetryService.js");
+      await initializeTelemetryDemoQueue();
+    } catch {
+      // Non-blocking
+    }
+  }
+
+  let item = persistentSandboxIncidents.get(id);
+  if (!item) {
+    // Also check by created_incident_id or telemetry id in case prefix differs
+    for (const val of persistentSandboxIncidents.values()) {
+      if (val.id === id || val.customer_id === id) {
+        item = val;
+        break;
+      }
+    }
+  }
   if (!item) return null;
   return mapStoredIncidentToResponse(item);
 }
@@ -2544,5 +2735,636 @@ export async function analyzeDemoScenarioWithAI(scenarioKey: string, customInstr
         details: "Simulated autonomous recovery dispatch executed cleanly in sandbox.",
       },
     },
+  };
+}
+
+export async function listHumanEscalations() {
+  const supabase = getSupabaseClient();
+  const escalationsMap = new Map<string, any>();
+
+  // 1. Gather all escalated and human-resolved incidents from persistent sandbox/memory store
+  for (const [id, item] of persistentSandboxIncidents.entries()) {
+    const isEscalatedStatus = item.status === "ESCALATED_TO_HUMAN" || item.status === "ESCALATED";
+    const hasEscalationDossier = item.escalationDossier != null;
+    const isHumanResolved = item.status === "RESOLVED" || (item.timeline && item.timeline.some((t: any) => t.type === "ESCALATED" || t.title?.toLowerCase().includes("human escalation") || t.title?.toLowerCase().includes("resolved by operator")));
+
+    if (isEscalatedStatus || hasEscalationDossier || isHumanResolved) {
+      const attempts = (item.actions || []).map((a: any) => ({
+        attemptNumber: a.attemptNumber || 1,
+        actionTitle: a.actionTitle || "Outreach Dispatch",
+        actionType: a.actionType || "PAYMENT_LINK",
+        channel: a.selectedChannel || a.aiChannel || "WHATSAPP",
+        strategy: a.aiStrategy || a.strategyName || "Autonomous Recovery",
+        status: a.providerStatus === "FAILED" ? "FAILED" : (a.status === "FAILED" ? "FAILED" : "SENT"),
+        provider: a.provider || "TWILIO",
+        providerMessageId: a.providerMessageId,
+        providerErrorCode: a.providerErrorCode,
+        providerErrorMessage: a.providerErrorMessage,
+        httpStatus: a.httpStatus,
+        executedAt: a.executedAt || item.updated_at || item.created_at,
+        details: a.details,
+        generatedMessage: a.generatedMessageText,
+      }));
+
+      const lastAction = item.actions && item.actions.length > 0 ? item.actions[item.actions.length - 1] : null;
+      const lastProviderResult = lastAction
+        ? (lastAction.providerErrorMessage
+            ? `FAILED (${lastAction.providerErrorCode || "ERR"})`
+            : (lastAction.providerStatus || lastAction.status || "SENT"))
+        : "N/A";
+
+      const currentStatus = (item.status === "RESOLVED" || item.status === "RECOVERED") ? "RESOLVED" : "ESCALATED_TO_HUMAN";
+
+      escalationsMap.set(id, {
+        id: item.id,
+        incidentId: item.id,
+        customerName: item.customer_name,
+        customerEmail: item.customer_email || "customer@example.test",
+        customerPhone: item.customer_phone || "+14155238886",
+        customerType: item.customer_type || "INDIVIDUAL",
+        scenarioType: item.scenario_type,
+        scenarioTypeName: item.scenario_type_name || item.scenario_type,
+        category: item.category || "GENERAL",
+        amountAtRisk: Number(item.amount || 0),
+        currency: item.currency || "INR",
+        attemptsCount: item.actions?.length || (hasEscalationDossier ? 3 : 0),
+        maxAttempts: 3,
+        priority: item.priority || item.severity || "HIGH",
+        status: currentStatus,
+        escalationReason:
+          item.escalationDossier?.whyStopped ||
+          item.failure_reason ||
+          "Bounded safety limit reached: 3 consecutive automated recovery attempts completed without customer settlement.",
+        escalatedAt: item.escalationDossier?.escalationTimestamp || item.updated_at || item.created_at || new Date().toISOString(),
+        recommendedHumanAction:
+          item.escalationDossier?.recommendedHumanAction ||
+          item.escalationDossier?.recommendedOperatorAction ||
+          "Initiate direct VIP phone outreach, verify billing details, and issue formal alternate payment link.",
+        lastAiStrategy: lastAction?.aiStrategy || (lastAction as any)?.strategyName || "Multi-channel Autonomous Recovery",
+        lastProviderResult,
+        lastAiAction: lastAction ? `${lastAction.actionTitle} (${lastAction.selectedChannel || "Outreach"})` : "Autonomous Escalation Handoff",
+        owner: (item as any).assignedTo || (item as any).owner || null,
+        operatorNotes: (item as any).operatorNotes || [],
+        notes: (item as any).notes || null,
+        attempts,
+        escalationDossier: item.escalationDossier || null,
+        timeline: item.timeline || [],
+        rootCause: item.failure_reason || item.billing_context || "Payment transaction authorization failed",
+        billingContext: item.billing_context,
+        failureReason: item.failure_reason,
+      });
+    }
+  }
+
+  // 2. Query Supabase for persisted escalated recovery cases
+  try {
+    const { data: dbCases } = await supabase
+      .from("recovery_cases")
+      .select("*, customers(*)")
+      .or("status.eq.ESCALATED,status.eq.ESCALATED_TO_HUMAN,status.eq.RECOVERED");
+
+    if (dbCases && dbCases.length > 0) {
+      for (const c of dbCases) {
+        if (!escalationsMap.has(c.id)) {
+          const isResolved = c.status === "RECOVERED" || c.status === "RESOLVED";
+          escalationsMap.set(c.id, {
+            id: c.id,
+            incidentId: c.id,
+            customerName: c.customers?.name || "Customer",
+            customerEmail: c.customers?.email || "customer@example.test",
+            customerPhone: c.customers?.phone || "+14155238886",
+            customerType: c.customers?.customer_type || "INDIVIDUAL",
+            scenarioType: "FAILED_PAYMENT",
+            scenarioTypeName: c.case_type || "Failed Transaction Recovery",
+            category: "PAYMENTS",
+            amountAtRisk: Number(c.amount_at_risk || c.amount || 0),
+            currency: c.currency || "INR",
+            attemptsCount: c.attempt_count || 3,
+            maxAttempts: 3,
+            priority: c.priority || "HIGH",
+            status: isResolved ? "RESOLVED" : "ESCALATED_TO_HUMAN",
+            escalationReason: c.escalation_reason || c.reason || "Escalated from automated workflow after maximum retry exhaustion.",
+            escalatedAt: c.updated_at || c.created_at,
+            recommendedHumanAction: "Direct account manager follow-up via phone or high-priority email.",
+            lastAiStrategy: "Payment Restructuring / Manual Link",
+            lastProviderResult: "EXHAUSTED",
+            lastAiAction: "Automated Escalation Handoff",
+            owner: c.assigned_to || null,
+            operatorNotes: c.notes ? [{ id: "db-note-1", note: c.notes, author: c.assigned_to || "Operator", timestamp: c.updated_at || c.created_at }] : [],
+            notes: c.notes || null,
+            attempts: [],
+            escalationDossier: null,
+            timeline: [],
+            rootCause: c.reason || "Payment declined",
+            billingContext: "Production recovery case",
+            failureReason: c.reason || "Payment declined",
+          });
+        }
+      }
+    }
+  } catch (e) {
+    // Non-blocking database fallback
+  }
+
+  // 3. If no escalation incidents exist yet in persistent sandbox or DB, seed realistic demo escalation cases
+  if (escalationsMap.size === 0) {
+    const now = new Date();
+    const demoCases = [
+      {
+        id: "esc-demo-enterprise-01",
+        incidentId: "esc-demo-enterprise-01",
+        customerName: "Aarav Sharma (CTO, CloudScale Technologies)",
+        customerEmail: "aarav.sharma@cloudscaletech.com",
+        customerPhone: "+919876543210",
+        customerType: "ENTERPRISE",
+        scenarioType: "ENTERPRISE_INVOICE",
+        scenarioTypeName: "Enterprise Cloud Mandate Failure",
+        category: "INVOICE",
+        amountAtRisk: 145000,
+        currency: "INR",
+        attemptsCount: 3,
+        maxAttempts: 3,
+        priority: "CRITICAL",
+        status: "ESCALATED_TO_HUMAN",
+        escalationReason: "Safety Boundary Exceeded: 3 automated retry & payment link dispatches attempted across SMS, WhatsApp, and Email without settlement.",
+        escalatedAt: new Date(now.getTime() - 25 * 60000).toISOString(),
+        recommendedHumanAction: "Direct Key Account Director VIP call. Offer corporate RTGS/NEFT routing or 7-day custom invoice extension.",
+        lastAiStrategy: "Executive High-Touch Outreach + Invoice Link",
+        lastProviderResult: "UNRESPONSIVE",
+        lastAiAction: "WhatsApp VIP Template (Twilio Sandbox Delivered)",
+        owner: null,
+        operatorNotes: [
+          {
+            id: "note-init-1",
+            note: "Automatic handoff from Autonomous Recovery Loop after attempt #3. Customer card limits exceeded.",
+            author: "Autonomous Engine",
+            timestamp: new Date(now.getTime() - 24 * 60000).toISOString(),
+          },
+        ],
+        notes: null,
+        rootCause: "Corporate credit card limit reached during monthly high-compute billing cycle",
+        billingContext: "Enterprise Tier Cloud Infrastructure Monthly Compute",
+        failureReason: "EXCEEDS_CARD_LIMIT",
+        attempts: [
+          {
+            attemptNumber: 1,
+            actionTitle: "Automated WhatsApp Invoice Link",
+            actionType: "PAYMENT_LINK",
+            channel: "WHATSAPP",
+            strategy: "Immediate Multi-Rail Link",
+            status: "SENT",
+            provider: "TWILIO",
+            providerMessageId: "SM998127391823a",
+            providerErrorCode: null,
+            executedAt: new Date(now.getTime() - 25 * 60000).toISOString(),
+            details: "Delivered WhatsApp notification with Razorpay direct payment URL.",
+            generatedMessage: "Hi Aarav, your CloudScale enterprise subscription renewal of ₹1,45,000 was declined (Card limit exceeded). Settle securely here: https://pay.recoverly.ai/inv-9921",
+          },
+          {
+            attemptNumber: 2,
+            actionTitle: "Urgent SMS Reminder",
+            actionType: "SMS_ALERT",
+            channel: "SMS",
+            strategy: "Urgency Escalation",
+            status: "SENT",
+            provider: "TWILIO",
+            providerMessageId: "SM882194729181b",
+            providerErrorCode: null,
+            executedAt: new Date(now.getTime() - 18 * 60000).toISOString(),
+            details: "SMS dispatched via Twilio Alpha.",
+            generatedMessage: "URGENT: CloudScale account compute suspension in 24 hours due to unpaid invoice ₹1,45,000. Pay now: https://pay.recoverly.ai/inv-9921",
+          },
+          {
+            attemptNumber: 3,
+            actionTitle: "Automated Interactive Voice Dispatch",
+            actionType: "VOICE_CALL",
+            channel: "VOICE",
+            strategy: "Final Safety Call",
+            status: "FAILED",
+            provider: "TWILIO",
+            providerMessageId: "CA119284729102c",
+            providerErrorCode: "BUSY_OR_NO_ANSWER",
+            providerErrorMessage: "Subscriber line busy / no answer after 30s ring",
+            executedAt: new Date(now.getTime() - 10 * 60000).toISOString(),
+            details: "Automated voice agent attempted audio prompt connection.",
+            generatedMessage: "Automated outbound voice call initiated. User did not answer.",
+          },
+        ],
+        timeline: [
+          {
+            id: "tl-demo-1",
+            timestamp: "10:30 AM",
+            type: "DETECT",
+            title: "Recurring Invoice Decline Detected",
+            description: "Bank declined recurring transaction with code EXCEEDS_CARD_LIMIT.",
+            status: "COMPLETED",
+          },
+          {
+            id: "tl-demo-2",
+            timestamp: "10:32 AM",
+            type: "ACT_SIMULATE",
+            title: "Attempt 1: WhatsApp Payment Link Dispatched",
+            description: "Sent authenticated link with 48h validity.",
+            status: "COMPLETED",
+          },
+          {
+            id: "tl-demo-3",
+            timestamp: "10:37 AM",
+            type: "ACT_SIMULATE",
+            title: "Attempt 2: SMS Urgency Alert Sent",
+            description: "Sent SMS notification via Twilio.",
+            status: "COMPLETED",
+          },
+          {
+            id: "tl-demo-4",
+            timestamp: "10:42 AM",
+            type: "ACT_SIMULATE",
+            title: "Attempt 3: Voice Call Attempt Failed",
+            description: "Call unanswered (line busy). 3-attempt limit reached.",
+            status: "COMPLETED",
+          },
+          {
+            id: "tl-demo-5",
+            timestamp: "10:43 AM",
+            type: "ESCALATED",
+            title: "Transitioned to Human Escalations Queue",
+            description: "Automated bounded recovery halted to safeguard customer relationship. High-touch human specialist required.",
+            status: "COMPLETED",
+          },
+        ],
+        escalationDossier: {
+          incidentId: "esc-demo-enterprise-01",
+          whyStopped: "Bounded Safety Limit: Exactly 3 automated recovery attempts executed. Brand protection rules prevent excessive automated outreach.",
+          attemptsSummary: "3 attempts across WhatsApp, SMS, and Voice. 2 delivered, 1 unanswered. Zero payment received.",
+          recommendedHumanAction: "Direct Key Account Director VIP call. Offer corporate RTGS/NEFT routing or 7-day custom invoice extension.",
+          escalationTimestamp: new Date(now.getTime() - 25 * 60000).toISOString(),
+        },
+      },
+      {
+        id: "esc-demo-saas-02",
+        incidentId: "esc-demo-saas-02",
+        customerName: "Priya Sundaram (Head of Ops, Nexus Retail)",
+        customerEmail: "priya.s@nexusretail.in",
+        customerPhone: "+919811223344",
+        customerType: "VIP",
+        scenarioType: "RECURRING_UPI",
+        scenarioTypeName: "UPI Auto-Debit Recurring Mandate Revoked",
+        category: "MANDATE",
+        amountAtRisk: 28500,
+        currency: "INR",
+        attemptsCount: 3,
+        maxAttempts: 3,
+        priority: "HIGH",
+        status: "ESCALATED_TO_HUMAN",
+        escalationReason: "Bank reported U30 mandate cancellation error on NPCI network. AI cannot auto-retry revoked mandates.",
+        escalatedAt: new Date(now.getTime() - 55 * 60000).toISOString(),
+        recommendedHumanAction: "Send new UPI Autopay authorization link via WhatsApp or request alternate corporate credit card details.",
+        lastAiStrategy: "Mandate Re-registration Prompt",
+        lastProviderResult: "FAILED (U30)",
+        lastAiAction: "SMS Mandate Re-auth Link Dispatched",
+        owner: "Mohnish Kaplish",
+        operatorNotes: [
+          {
+            id: "note-init-2",
+            note: "Claimed by Mohnish. WhatsApp message sent requesting Priya to authenticate the newly generated NPCI e-mandate.",
+            author: "Mohnish Kaplish",
+            timestamp: new Date(now.getTime() - 30 * 60000).toISOString(),
+          },
+        ],
+        notes: "Pending customer re-authorization of NPCI UPI AutoPay mandate.",
+        rootCause: "NPCI Mandate Error U30: Customer modified UPI handle or changed default bank account",
+        billingContext: "Nexus Retail Annual SaaS Subscription",
+        failureReason: "MANDATE_REVOKED_U30",
+        attempts: [
+          {
+            attemptNumber: 1,
+            actionTitle: "NPCI Direct Mandate Re-execution",
+            actionType: "RETRY_PAYMENT",
+            channel: "UPI",
+            strategy: "Acquirer Re-presentation",
+            status: "FAILED",
+            provider: "RAZORPAY",
+            providerErrorCode: "U30",
+            providerErrorMessage: "Mandate revoked or account blocked for recurring debit",
+            executedAt: new Date(now.getTime() - 60 * 60000).toISOString(),
+            details: "NPCI recurring batch execution returned reject code U30.",
+          },
+          {
+            attemptNumber: 2,
+            actionTitle: "WhatsApp Mandate Re-link Prompt",
+            actionType: "PAYMENT_LINK",
+            channel: "WHATSAPP",
+            strategy: "Zero-Friction Mandate Link",
+            status: "SENT",
+            provider: "TWILIO",
+            providerMessageId: "SM771239847120a",
+            executedAt: new Date(now.getTime() - 58 * 60000).toISOString(),
+            details: "Sent e-mandate registration flow URL.",
+          },
+          {
+            attemptNumber: 3,
+            actionTitle: "Urgent SMS Mandate Notification",
+            actionType: "SMS_ALERT",
+            channel: "SMS",
+            strategy: "Direct Customer Alert",
+            status: "SENT",
+            provider: "TWILIO",
+            providerMessageId: "SM661928471928b",
+            executedAt: new Date(now.getTime() - 55 * 60000).toISOString(),
+            details: "Dispatched SMS alert with 24h grace period.",
+          },
+        ],
+        timeline: [
+          {
+            id: "tl-demo-21",
+            timestamp: "09:40 AM",
+            type: "DETECT",
+            title: "UPI Mandate Revocation Detected",
+            description: "NPCI returned U30 decline.",
+            status: "COMPLETED",
+          },
+          {
+            id: "tl-demo-22",
+            timestamp: "09:45 AM",
+            type: "ESCALATED",
+            title: "Escalated to Human Specialist",
+            description: "Revoked mandates require interactive customer consent for new mandate generation.",
+            status: "COMPLETED",
+          },
+        ],
+        escalationDossier: {
+          incidentId: "esc-demo-saas-02",
+          whyStopped: "Mandate revoked by bank. Autonomous retries are ineffective without fresh UPI mandate token creation.",
+          attemptsSummary: "1 retry failed (U30), 2 outreach links dispatched. No customer payment received.",
+          recommendedHumanAction: "Call Priya to assist with instant 30-second UPI AutoPay setup or alternate card link.",
+          escalationTimestamp: new Date(now.getTime() - 55 * 60000).toISOString(),
+        },
+      },
+      {
+        id: "esc-demo-resolved-03",
+        incidentId: "esc-demo-resolved-03",
+        customerName: "Vikram Malhotra (CFO, Zenith Logistics)",
+        customerEmail: "vikram.m@zenithlogistics.com",
+        customerPhone: "+919765432109",
+        customerType: "ENTERPRISE",
+        scenarioType: "3DS_FAILURE",
+        scenarioTypeName: "3DS Otp Timeout on High-Value Transaction",
+        category: "PAYMENTS",
+        amountAtRisk: 82000,
+        currency: "INR",
+        attemptsCount: 3,
+        maxAttempts: 3,
+        priority: "HIGH",
+        status: "RESOLVED",
+        escalationReason: "3 consecutive 3DS authentication timeouts during executive flight booking module renewal.",
+        escalatedAt: new Date(now.getTime() - 120 * 60000).toISOString(),
+        recommendedHumanAction: "Generate high-priority VIP invoice link and confirm card authentication via phone.",
+        lastAiStrategy: "Direct Operator Resolution",
+        lastProviderResult: "SETTLED_BY_OPERATOR",
+        lastAiAction: "Operator Phone Call Settlement",
+        owner: "Mohnish Kaplish",
+        operatorNotes: [
+          {
+            id: "note-init-3",
+            note: "Spoke with Vikram via direct phone call. Sent alternate corporate AMEX link. Transaction approved immediately.",
+            author: "Mohnish Kaplish",
+            timestamp: new Date(now.getTime() - 90 * 60000).toISOString(),
+          },
+        ],
+        notes: "Full settlement received ₹82,000 via corporate AMEX link.",
+        rootCause: "3DS OTP network delivery failure from issuing bank",
+        billingContext: "Zenith Annual Enterprise Fleet Management",
+        failureReason: "3DS_TIMEOUT",
+        attempts: [],
+        timeline: [
+          {
+            id: "tl-demo-31",
+            timestamp: "08:15 AM",
+            type: "ESCALATED",
+            title: "3DS Failure Escalated",
+            description: "Customer failed OTP verification 3 times.",
+            status: "COMPLETED",
+          },
+          {
+            id: "tl-demo-32",
+            timestamp: "08:45 AM",
+            type: "DECIDE",
+            title: "Operator Resolved Case",
+            description: "Operator Mohnish Kaplish successfully settled transaction of ₹82,000.",
+            status: "COMPLETED",
+          },
+        ],
+      },
+    ];
+
+    for (const d of demoCases) {
+      escalationsMap.set(d.id, d);
+    }
+  }
+
+  const escalations = Array.from(escalationsMap.values()).sort(
+    (a, b) => new Date(b.escalatedAt).getTime() - new Date(a.escalatedAt).getTime()
+  );
+
+  const openCases = escalations.filter((e) => e.status === "ESCALATED_TO_HUMAN" || e.status === "ESCALATED");
+  const resolvedCases = escalations.filter((e) => e.status === "RESOLVED" || e.status === "RECOVERED");
+
+  const openCount = openCases.length;
+  const amountAtRisk = openCases.reduce((sum, item) => sum + (Number(item.amountAtRisk) || 0), 0);
+  const resolvedCount = resolvedCases.length;
+  const totalEscalated = escalations.length;
+
+  return {
+    totalEscalated,
+    openCount,
+    amountAtRisk,
+    totalRevenueAtRisk: amountAtRisk,
+    resolvedCount,
+    currency: "INR",
+    escalations,
+  };
+}
+
+export async function takeOwnershipOfHumanEscalation(
+  incidentId: string,
+  operatorName: string = "Revenue Specialist"
+) {
+  const item = persistentSandboxIncidents.get(incidentId);
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  if (item) {
+    (item as any).assignedTo = operatorName;
+    (item as any).owner = operatorName;
+    item.updated_at = now.toISOString();
+
+    if (!item.timeline) item.timeline = [];
+    item.timeline.push({
+      id: `tl-own-${Date.now()}`,
+      timestamp: timeStr,
+      type: "DECIDE",
+      title: `Operator Ownership Assigned to ${operatorName}`,
+      description: `Case ownership claimed by ${operatorName}. Incident is actively managed under high-touch human escalation protocol.`,
+      status: "COMPLETED",
+      details: { operator: operatorName, claimedAt: now.toISOString() },
+    });
+  }
+
+  const supabase = getSupabaseClient();
+  try {
+    await supabase
+      .from("recovery_cases")
+      .update({
+        assigned_to: operatorName,
+        updated_at: now.toISOString(),
+      })
+      .eq("id", incidentId);
+
+    await supabase.from("audit_logs").insert({
+      recovery_case_id: incidentId,
+      actor_type: "OPERATOR",
+      event: "HUMAN_ESCALATION_OWNERSHIP_ASSIGNED",
+      details: {
+        incident_id: incidentId,
+        operator: operatorName,
+      },
+      created_at: now.toISOString(),
+    });
+  } catch (e) {
+    // Non-blocking
+  }
+
+  return {
+    success: true,
+    message: `Ownership assigned to ${operatorName}`,
+    incident: item || { id: incidentId, assignedTo: operatorName },
+  };
+}
+
+export async function addNoteToHumanEscalation(
+  incidentId: string,
+  input: { note: string; operatorName?: string }
+) {
+  const item = persistentSandboxIncidents.get(incidentId);
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const operator = input.operatorName || "Revenue Specialist";
+
+  if (item) {
+    if (!(item as any).operatorNotes) (item as any).operatorNotes = [];
+    (item as any).operatorNotes.push({
+      id: `note-${Date.now()}`,
+      note: input.note,
+      author: operator,
+      timestamp: now.toISOString(),
+    });
+    item.updated_at = now.toISOString();
+
+    if (!item.timeline) item.timeline = [];
+    item.timeline.push({
+      id: `tl-note-${Date.now()}`,
+      timestamp: timeStr,
+      type: "DECIDE",
+      title: `Operator Note Added by ${operator}`,
+      description: input.note,
+      status: "COMPLETED",
+      details: { note: input.note, author: operator },
+    });
+  }
+
+  const supabase = getSupabaseClient();
+  try {
+    await supabase.from("audit_logs").insert({
+      recovery_case_id: incidentId,
+      actor_type: "OPERATOR",
+      event: "HUMAN_ESCALATION_NOTE_ADDED",
+      details: {
+        incident_id: incidentId,
+        note: input.note,
+        operator,
+      },
+      created_at: now.toISOString(),
+    });
+  } catch (e) {
+    // Non-blocking
+  }
+
+  return {
+    success: true,
+    message: `Note added to incident ${incidentId}`,
+    incident: item || { id: incidentId },
+  };
+}
+
+export async function resolveHumanEscalation(
+  incidentId: string,
+  input: {
+    resolutionType?: string;
+    notes?: string;
+    settlementAmount?: number;
+    operatorName?: string;
+  }
+) {
+  // Cancel any active timers immediately
+  clearIncidentTimer(incidentId);
+
+  const item = persistentSandboxIncidents.get(incidentId);
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  if (item) {
+    item.status = "RESOLVED";
+    item.updated_at = now.toISOString();
+    if (item.scheduler) {
+      item.scheduler.status = "COMPLETED";
+      item.scheduler.nextAttemptAt = null;
+    }
+    if (!item.timeline) item.timeline = [];
+    item.timeline.push({
+      id: `tl-res-${Date.now()}`,
+      timestamp: timeStr,
+      type: "RECOVERED",
+      title: "Human Escalation Resolved by Operator",
+      description: input.notes || "Case resolved by human operator. Settlement recorded.",
+      status: "COMPLETED",
+      details: {
+        operator: input.operatorName || "Revenue Specialist",
+        resolutionType: input.resolutionType || "MANUAL_SETTLEMENT",
+        settlementAmount: input.settlementAmount || item.amount,
+        notes: input.notes,
+      },
+    });
+  }
+
+  const supabase = getSupabaseClient();
+  try {
+    await supabase.from("recovery_cases").update({
+      status: "RECOVERED",
+      recovered_amount: input.settlementAmount || (item ? item.amount : 0),
+      recovered_at: now.toISOString(),
+      notes: input.notes,
+    }).eq("id", incidentId);
+
+    await supabase.from("audit_logs").insert({
+      recovery_case_id: incidentId,
+      actor_type: "OPERATOR",
+      event: "HUMAN_ESCALATION_RESOLVED",
+      details: {
+        incident_id: incidentId,
+        resolution_type: input.resolutionType,
+        notes: input.notes,
+        settlement_amount: input.settlementAmount,
+        operator: input.operatorName,
+      },
+      created_at: now.toISOString(),
+    });
+  } catch (e) {
+    // Non-blocking
+  }
+
+  return {
+    success: true,
+    message: `Incident ${incidentId} marked as RESOLVED by human operator.`,
+    incident: item || { id: incidentId, status: "RESOLVED" },
   };
 }

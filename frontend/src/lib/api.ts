@@ -22,47 +22,65 @@ import type {
   ScenarioSimulationResult,
   ScenarioTypeConfig,
   Subscription,
+  SyntheticTelemetryRecord,
+  TelemetryAIAnalysis,
+  TelemetryQueueSummary,
+  DetectionEvaluation,
   Transaction,
   UserProfile,
+  HumanEscalationsSummaryResponse,
+  ChannelReadinessResponse,
 } from "./types";
 
 export function getApiBaseUrl(): string {
   const envUrl = (import.meta.env.VITE_API_BASE_URL || "").trim();
   
+  // Default to same-origin relative /api
   if (!envUrl) {
     return "/api";
   }
 
-  // If in browser and envUrl points to localhost/0.0.0.0, use relative "/api" for same-origin preview compatibility
+  // If in browser and envUrl points to localhost, 0.0.0.0, relative path, or current preview host
   if (typeof window !== "undefined") {
     if (
+      envUrl === "/api" ||
+      envUrl === "/" ||
       envUrl.includes("localhost") ||
       envUrl.includes("0.0.0.0") ||
-      envUrl.includes("127.0.0.1")
+      envUrl.includes("127.0.0.1") ||
+      envUrl.startsWith("/") ||
+      (window.location.hostname && envUrl.includes(window.location.hostname))
     ) {
       return "/api";
     }
   }
 
-  // Normalize: remove trailing slashes
-  return envUrl.replace(/\/+$/, "");
+  // Normalize: remove trailing slashes and ensure /api is present at the end
+  const normalized = envUrl.replace(/\/+$/, "");
+  return normalized.endsWith("/api") ? normalized : `${normalized}/api`;
 }
 
 export function resolveApiUrl(path: string): string {
   const baseUrl = getApiBaseUrl();
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
 
-  // If baseUrl already ends with /api and cleanPath starts with /api/, avoid duplicate /api/api/
-  if (baseUrl.endsWith("/api") && cleanPath.startsWith("/api/")) {
-    return `${baseUrl}${cleanPath.substring(4)}`;
-  }
-  
-  // If baseUrl is empty, return cleanPath
-  if (!baseUrl) {
-    return cleanPath;
+  // Ensure apiPath begins with /api
+  let apiPath = cleanPath;
+  if (!cleanPath.startsWith("/api/") && cleanPath !== "/api") {
+    apiPath = `/api${cleanPath}`;
   }
 
-  return `${baseUrl}${cleanPath}`;
+  // If baseUrl is the relative /api prefix
+  if (baseUrl === "/api" || baseUrl === "") {
+    return apiPath;
+  }
+
+  // If baseUrl is an absolute URL ending with /api
+  if (baseUrl.endsWith("/api")) {
+    return `${baseUrl}${apiPath.substring(4)}`;
+  }
+
+  return `${baseUrl}${apiPath}`;
 }
 
 const AUTH_TOKEN_KEY = "recoverly_auth_token";
@@ -549,4 +567,138 @@ export async function analyzeDemoScenarioApi(
     body: JSON.stringify({ custom_instruction: customInstruction }),
   });
 }
+
+// Synthetic Telemetry Demonstration Queue APIs
+export async function fetchTelemetryQueueApi(): Promise<{
+  data: SyntheticTelemetryRecord[];
+  summary: TelemetryQueueSummary;
+}> {
+  return fetchJson<{ data: SyntheticTelemetryRecord[]; summary: TelemetryQueueSummary }>("/telemetry/demo-queue");
+}
+
+export async function fetchTelemetryRecordApi(id: string): Promise<SyntheticTelemetryRecord> {
+  const res = await fetchJson<{ success: boolean; data: SyntheticTelemetryRecord }>(`/telemetry/${id}`);
+  return res.data;
+}
+
+export async function updateTelemetryContactApi(
+  id: string,
+  contact: { email?: string; phone?: string }
+): Promise<SyntheticTelemetryRecord> {
+  const res = await fetchJson<{ success: boolean; message: string; data: SyntheticTelemetryRecord }>(
+    `/telemetry/${id}/contact`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(contact),
+    }
+  );
+  return res.data;
+}
+
+export async function createCustomTelemetryApi(input: {
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  customerType?: "INDIVIDUAL" | "BUSINESS";
+  amount: number;
+  currency?: string;
+  paymentMethod: string;
+  paymentRail?: string;
+  events?: any[];
+  sessionContext?: Record<string, any>;
+  historicalContext?: Record<string, any>;
+  notes?: string;
+}): Promise<SyntheticTelemetryRecord> {
+  const res = await fetchJson<{ success: boolean; data: SyntheticTelemetryRecord }>("/telemetry", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return res.data;
+}
+
+export async function analyzeTelemetryApi(id: string): Promise<{
+  success: boolean;
+  message: string;
+  data: {
+    telemetry: SyntheticTelemetryRecord;
+    analysis: TelemetryAIAnalysis;
+    evaluation: DetectionEvaluation;
+    createdIncident: any;
+  };
+}> {
+  return fetchJson<{
+    success: boolean;
+    message: string;
+    data: {
+      telemetry: SyntheticTelemetryRecord;
+      analysis: TelemetryAIAnalysis;
+      evaluation: DetectionEvaluation;
+      createdIncident: any;
+    };
+  }>(`/telemetry/${id}/analyze`, {
+    method: "POST",
+  });
+}
+
+export async function resetTelemetryQueueApi(): Promise<{ success: boolean; message: string }> {
+  return fetchJson<{ success: boolean; message: string }>("/telemetry/reset-queue", {
+    method: "POST",
+  });
+}
+
+// ----------------------------------------------------
+// Human Escalations APIs
+// ----------------------------------------------------
+
+export async function fetchHumanEscalationsApi(): Promise<HumanEscalationsSummaryResponse> {
+  return fetchJson<HumanEscalationsSummaryResponse>("/human-escalations");
+}
+
+export async function resolveHumanEscalationApi(
+  incidentId: string,
+  data: {
+    resolutionType?: string;
+    notes?: string;
+    settlementAmount?: number;
+    operatorName?: string;
+  }
+): Promise<{ success: boolean; message: string; incident: any }> {
+  return fetchJson<{ success: boolean; message: string; incident: any }>(`/human-escalations/${incidentId}/resolve`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function takeOwnershipOfHumanEscalationApi(
+  incidentId: string,
+  operatorName?: string
+): Promise<{ success: boolean; message: string; incident: any }> {
+  return fetchJson<{ success: boolean; message: string; incident: any }>(`/human-escalations/${incidentId}/take-ownership`, {
+    method: "POST",
+    body: JSON.stringify({ operatorName }),
+  });
+}
+
+export async function addNoteToHumanEscalationApi(
+  incidentId: string,
+  data: {
+    note: string;
+    operatorName?: string;
+  }
+): Promise<{ success: boolean; message: string; incident: any }> {
+  return fetchJson<{ success: boolean; message: string; incident: any }>(`/human-escalations/${incidentId}/notes`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ----------------------------------------------------
+// Channel Readiness & Diagnostics API
+// ----------------------------------------------------
+
+export async function fetchChannelReadinessApi(): Promise<{ success: boolean; data: ChannelReadinessResponse }> {
+  return fetchJson<{ success: boolean; data: ChannelReadinessResponse }>("/telemetry/channel-readiness");
+}
+
+
 

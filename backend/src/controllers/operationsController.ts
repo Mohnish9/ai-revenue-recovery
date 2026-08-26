@@ -44,6 +44,10 @@ import {
   simulateRecoveryScenario,
   simulateSandboxIncident,
   updateCaseStatus,
+  listHumanEscalations,
+  resolveHumanEscalation,
+  takeOwnershipOfHumanEscalation,
+  addNoteToHumanEscalation,
 } from "../services/operationsService.js";
 
 function validateId(id: string) {
@@ -576,6 +580,57 @@ export async function cancelScheduledRecoveryController(request: Request, respon
     sendError(response, error);
   }
 }
+
+export async function listHumanEscalationsController(_request: Request, response: Response) {
+  try {
+    const result = await listHumanEscalations();
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function resolveHumanEscalationController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { resolutionType, notes, settlementAmount, operatorName } = request.body || {};
+    const result = await resolveHumanEscalation(id, {
+      resolutionType,
+      notes,
+      settlementAmount: settlementAmount ? Number(settlementAmount) : undefined,
+      operatorName,
+    });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function takeOwnershipOfHumanEscalationController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { operatorName } = request.body || {};
+    const result = await takeOwnershipOfHumanEscalation(id, operatorName);
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
+export async function addNoteToHumanEscalationController(request: Request, response: Response) {
+  try {
+    const id = getId(request);
+    const { note, operatorName } = request.body || {};
+    if (!note || typeof note !== "string" || !note.trim()) {
+      return response.status(400).json({ error: "Note content is required." });
+    }
+    const result = await addNoteToHumanEscalation(id, { note: note.trim(), operatorName });
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}
+
 
 
 

@@ -16,7 +16,9 @@ export interface AuthResponse {
 
 export type PageKey =
   | "dashboard"
+  | "telemetry-queue"
   | "recovery"
+  | "human-escalations"
   | "failed-payments"
   | "transactions"
   | "invoices"
@@ -54,12 +56,36 @@ export interface HealthResponse {
   };
 }
 
+export interface ScenarioBreakdownItem {
+  key: string;
+  name: string;
+  category: string;
+  incidentsCount: number;
+  activeCount: number;
+  recoveredCount: number;
+  escalatedCount: number;
+  amountAtRisk: number;
+  amountRecovered: number;
+  currency: string;
+}
+
+export interface ChannelEfficiencyItem {
+  channel: string;
+  label: string;
+  attemptsCount: number;
+  successCount: number;
+  successRate: number | null;
+}
+
 export interface DashboardSummary {
   revenueAtRisk: number;
   openRecoveryCases: number;
   recoveredThisMonth: number;
   recoveryRate: number;
   totalRecoveryCases: number;
+  totalEscalated?: number;
+  scenarioBreakdown?: ScenarioBreakdownItem[];
+  channelEfficiency?: ChannelEfficiencyItem[];
 }
 
 export interface Customer {
@@ -467,6 +493,10 @@ export interface OutboundDeliveryResult {
   recipientName?: string;
   messagePreview?: string;
   providerMessageId?: string;
+  providerStatus?: string;
+  providerErrorCode?: string;
+  providerErrorMessage?: string;
+  httpStatus?: number;
   deliveredAt?: string;
   dispatchedAt?: string;
   content?: {
@@ -525,6 +555,9 @@ export interface SandboxActionRecord {
   provider?: string;
   providerStatus?: string;
   providerMessageId?: string;
+  providerErrorCode?: string;
+  providerErrorMessage?: string;
+  httpStatus?: number;
   executedAt: string;
   channelDispatches?: OutboundDeliveryResult[];
   details?: string;
@@ -747,4 +780,232 @@ export interface DemoScenarioFullResponse {
   };
   analysis: DemoScenarioAIResult;
 }
+
+export interface RawTelemetryEvent {
+  eventId: string;
+  timestamp: string;
+  eventType: string;
+  source: string;
+  payload: Record<string, any>;
+}
+
+export interface SyntheticTelemetryRecord {
+  id: string;
+  batchNumber: number;
+  title: string;
+  customerId: string;
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  demoOutreachContact?: {
+    email?: string;
+    phone?: string;
+    updatedAt?: string;
+    customized?: boolean;
+  };
+  customerType: "INDIVIDUAL" | "BUSINESS";
+  amount: number;
+  currency: string;
+  paymentMethod: string;
+  paymentRail: string;
+  events: RawTelemetryEvent[];
+  sessionContext: Record<string, any>;
+  historicalContext: Record<string, any>;
+  status: "WAITING" | "ANALYZING" | "AI_DETECTED" | "RECOVERY_ACTIVE" | "RECOVERED" | "ESCALATED" | "ERROR";
+  createdIncidentId?: string;
+  createdAt: string;
+  updatedAt: string;
+  aiAnalysis?: TelemetryAIAnalysis | null;
+  evaluation?: DetectionEvaluation | null;
+  routeMapping?: { pageKey: string; pageTitle: string; category: string };
+  groundTruth?: TelemetryGroundTruth | null;
+  createdIncident?: SandboxIncident | null;
+}
+
+export interface TelemetryGroundTruth {
+  id: string;
+  telemetryId: string;
+  expectedScenarioType: string;
+  expectedCategory: string;
+  description: string;
+  createdAt: string;
+}
+
+export interface TelemetryAIAnalysis {
+  id: string;
+  telemetryId: string;
+  detectedScenarioType: string;
+  confidence: number;
+  rootCause: string;
+  evidence: string[];
+  reasoning: string;
+  revenueAtRisk: number;
+  recommendedStrategy: string;
+  recommendedChannel: "EMAIL" | "WHATSAPP" | "SMS";
+  explanation: string;
+  modelName: string;
+  createdAt: string;
+}
+
+export interface DetectionEvaluation {
+  id: string;
+  telemetryId: string;
+  aiPrediction: string;
+  groundTruth: string;
+  match: boolean;
+  confidence: number;
+  evaluatedAt: string;
+}
+
+export interface TelemetryQueueSummary {
+  totalSignals: number;
+  waitingCount: number;
+  analyzedCount: number;
+  activeCount: number;
+  recoveredCount: number;
+  escalatedCount: number;
+  evaluatedCount: number;
+  correctDetections: number;
+  accuracyPercentage: number;
+}
+
+export interface EscalationAttemptRecord {
+  attemptNumber: number;
+  actionTitle: string;
+  actionType: string;
+  channel: "WHATSAPP" | "EMAIL" | "SMS" | string;
+  strategy: string;
+  status: "SENT" | "FAILED" | "DELIVERED" | "SIMULATED";
+  provider: string;
+  providerMessageId?: string;
+  providerErrorCode?: string;
+  providerErrorMessage?: string;
+  httpStatus?: number;
+  executedAt: string;
+  details?: string;
+  generatedMessage?: string;
+}
+
+export interface HumanEscalationItem {
+  id: string;
+  incidentId: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  customerType: "INDIVIDUAL" | "BUSINESS" | "ENTERPRISE" | "VIP" | string;
+  scenarioType: string;
+  scenarioTypeName: string;
+  category: string;
+  amountAtRisk: number;
+  currency: string;
+  attemptsCount: number;
+  maxAttempts: number;
+  priority?: string;
+  status: "ESCALATED_TO_HUMAN" | "ESCALATED" | "RESOLVED" | "RECOVERED" | "CLOSED" | string;
+  escalationReason: string;
+  escalatedAt: string;
+  recommendedHumanAction: string;
+  lastAiStrategy?: string;
+  lastProviderResult?: string;
+  lastAiAction: string;
+  owner?: string | null;
+  operatorNotes?: Array<{ id: string; note: string; author: string; timestamp: string }>;
+  notes?: string | null;
+  attempts: EscalationAttemptRecord[];
+  escalationDossier?: any;
+  timeline?: any[];
+  rootCause?: string;
+  billingContext?: string;
+  failureReason?: string;
+}
+
+export interface HumanEscalationsSummaryResponse {
+  totalEscalated: number;
+  openCount?: number;
+  amountAtRisk?: number;
+  totalRevenueAtRisk: number;
+  resolvedCount?: number;
+  currency: string;
+  escalations: HumanEscalationItem[];
+}
+
+export interface DetailedChannelReadinessData {
+  recipientEmail?: string;
+  recipientPhone?: string;
+  recipientName?: string;
+  email: {
+    status: "READY" | "RESTRICTED" | "FAILED" | "UNCONFIGURED";
+    deliveryLabel: string;
+    configuredSender: string;
+    isResendTestingDomain: boolean;
+    isDeliverableToRecipient: boolean;
+    details: string;
+    actionLabel: string;
+    actionUrl: string;
+  };
+  phone: {
+    phone_verification_status: "VERIFIED" | "NOT_VERIFIED";
+    twilio_sms_status: "READY" | "TRIAL_RESTRICTED" | "FAILED" | "UNCONFIGURED";
+    ownershipLabel: string;
+    smsLabel: string;
+    details: string;
+    actionLabel: string;
+  };
+  whatsapp: {
+    whatsapp_sandbox_status: "CONNECTED" | "NOT_CONNECTED" | "READY" | "UNCONFIGURED";
+    sandboxNumber: string;
+    joinKeyword: string;
+    deepLink: string;
+    details: string;
+    actionLabel: string;
+  };
+  preflightPassed: boolean;
+  preflightSummary: string;
+  evaluatedAt: string;
+}
+
+export interface ChannelReadinessResponse extends Partial<DetailedChannelReadinessData> {
+  resend?: {
+    configured: boolean;
+    apiKeyPresent: boolean;
+    fromEmail: string;
+    status: string;
+    deliveryLabel: string;
+    details: string;
+    isResendTestingDomain?: boolean;
+    isDeliverableToRecipient?: boolean;
+  };
+  twilioSms?: {
+    configured: boolean;
+    accountSidPresent: boolean;
+    fromNumber: string;
+    mode: "TRIAL" | "UPGRADED";
+    status: string;
+    phone_verification_status?: string;
+    deliveryLabel: string;
+    details: string;
+    errorCodeDoc?: string;
+    actionLabel: string;
+  };
+  twilioWhatsApp?: {
+    configured: boolean;
+    accountSidPresent: boolean;
+    fromNumber: string;
+    sandboxNumber: string;
+    status: string;
+    whatsapp_sandbox_status?: string;
+    deliveryLabel: string;
+    details: string;
+    joinKeyword: string;
+    deepLink?: string;
+    actionLabel: string;
+  };
+  defaultTestContact?: {
+    email: string;
+    phone: string;
+    hasCustomContact: boolean;
+  };
+}
+
+
 

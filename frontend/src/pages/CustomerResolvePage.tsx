@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { resolveApiUrl } from "../lib/api";
 import {
   CheckCircle2,
   ShieldCheck,
@@ -40,7 +41,7 @@ export function CustomerResolvePage({ incidentId }: { incidentId: string }) {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`/api/sandbox/incidents/${incidentId}/public`);
+      const res = await fetch(resolveApiUrl(`/sandbox/incidents/${incidentId}/public`));
       if (!res.ok) {
         throw new Error(`Payment resolution link expired or incident not found (HTTP ${res.status})`);
       }
@@ -77,7 +78,7 @@ export function CustomerResolvePage({ incidentId }: { incidentId: string }) {
           ? "Tokenized Card Instant Re-auth"
           : "NetBanking Direct Settlement";
 
-      const res = await fetch(`/api/sandbox/incidents/${incidentId}/resolve`, {
+      const res = await fetch(resolveApiUrl(`/sandbox/incidents/${incidentId}/resolve`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

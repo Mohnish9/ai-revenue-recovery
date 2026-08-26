@@ -803,9 +803,17 @@ export function AutonomousRecoveryWorkspace({
                                 {providerId || (isFailed ? "Failed" : "Simulated Gateway")}
                               </code>
                             </div>
-                            {primaryDispatch?.error && (
-                              <div style={{ gridColumn: "span 2", color: "#dc2626", fontSize: "11px", background: "#fef2f2", padding: "6px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
-                                <strong>Provider Error:</strong> {primaryDispatch.error}
+                            {(primaryDispatch?.providerErrorCode || act.providerErrorCode) && (
+                              <div style={{ gridColumn: "span 2" }}>
+                                <span style={{ color: "#64748b" }}>Error Code:</span>{" "}
+                                <code style={{ fontSize: "11px", color: "#dc2626", background: "#fef2f2", padding: "2px 6px", borderRadius: "4px" }}>
+                                  {primaryDispatch?.providerErrorCode || act.providerErrorCode}
+                                </code>
+                              </div>
+                            )}
+                            {(primaryDispatch?.providerErrorMessage || primaryDispatch?.error || act.providerErrorMessage) && (
+                              <div style={{ gridColumn: "span 2", color: "#dc2626", fontSize: "11px", background: "#fef2f2", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fca5a5", lineHeight: "1.4" }}>
+                                <strong>Provider Diagnostic:</strong> {primaryDispatch?.providerErrorMessage || primaryDispatch?.error || act.providerErrorMessage}
                               </div>
                             )}
                           </div>
@@ -1147,8 +1155,33 @@ export function AutonomousRecoveryWorkspace({
                       </span>
                     </div>
 
-                    {/* Channel Table */}
-                    <div style={{ padding: "16px" }}>
+                    {/* Attempt Detail Container */}
+                    <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>
+                      {/* AI Decision & Message Row */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: "14px" }}>
+                        <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                          <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase", marginBottom: "4px" }}>
+                            AI Decision & Strategy
+                          </div>
+                          <div style={{ fontSize: "12px", color: "#1e293b", marginBottom: "6px" }}>
+                            <strong>Strategy:</strong> {act.aiStrategy || act.actionType} • <strong>Channel:</strong> {act.selectedChannel || act.aiChannel || "SMS"}
+                          </div>
+                          <div style={{ fontSize: "11.5px", color: "#64748b", lineHeight: "1.4" }}>
+                            {act.reason || "Autonomous recovery touchpoint formulated based on incident state."}
+                          </div>
+                        </div>
+
+                        <div style={{ background: "#f1f5f9", padding: "12px 14px", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                          <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase", marginBottom: "4px" }}>
+                            Dispatched Message Copy ({act.selectedChannel || act.aiChannel || "SMS"})
+                          </div>
+                          <div style={{ fontSize: "11.5px", color: "#0f172a", whiteSpace: "pre-wrap", maxHeight: "110px", overflowY: "auto", fontFamily: "monospace" }}>
+                            {act.generatedMessageText || act.details || "No message content recorded"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Provider Gateway Table */}
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
                         <thead>
                           <tr style={{ borderBottom: "1px solid #e2e8f0", textAlign: "left", color: "#64748b" }}>
@@ -1156,7 +1189,7 @@ export function AutonomousRecoveryWorkspace({
                             <th style={{ padding: "8px 10px" }}>Provider Adapter</th>
                             <th style={{ padding: "8px 10px" }}>Destination Target</th>
                             <th style={{ padding: "8px 10px" }}>Delivery Status</th>
-                            <th style={{ padding: "8px 10px" }}>Provider ID / Response</th>
+                            <th style={{ padding: "8px 10px" }}>Provider ID / Diagnostic</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1171,7 +1204,7 @@ export function AutonomousRecoveryWorkspace({
                                   {cd.channel === "WHATSAPP" ? "💬 WhatsApp" : cd.channel === "SMS" ? "📱 SMS" : "✉️ Email"}
                                 </td>
                                 <td style={{ padding: "10px", color: "#334155" }}>
-                                  {cd.channel === "EMAIL" ? "Resend API" : "Twilio REST API"}
+                                  {cd.channel === "EMAIL" ? "Resend API" : cd.channel === "WHATSAPP" ? "Twilio WhatsApp" : "Twilio SMS"}
                                 </td>
                                 <td style={{ padding: "10px", fontFamily: "monospace", color: "#475569" }}>
                                   {cd.destination || cd.recipient || cd.to || "—"}
@@ -1187,15 +1220,20 @@ export function AutonomousRecoveryWorkspace({
                                 <td style={{ padding: "10px" }}>
                                   {cd.providerMessageId && (
                                     <div style={{ fontFamily: "monospace", color: "#0f172a", fontSize: "11px" }}>
-                                      ID: <strong>{cd.providerMessageId}</strong>
+                                      SID/ID: <strong>{cd.providerMessageId}</strong>
                                     </div>
                                   )}
-                                  {cd.error && (
+                                  {cd.providerErrorCode && (
                                     <div style={{ color: "#dc2626", fontSize: "11px", marginTop: "2px" }}>
-                                      Error: {cd.error}
+                                      Code: <strong>{cd.providerErrorCode}</strong>
                                     </div>
                                   )}
-                                  {!cd.providerMessageId && !cd.error && (
+                                  {(cd.providerErrorMessage || cd.error) && (
+                                    <div style={{ color: "#dc2626", fontSize: "11px", marginTop: "2px", maxWidth: "350px", lineHeight: "1.3" }}>
+                                      {cd.providerErrorMessage || cd.error}
+                                    </div>
+                                  )}
+                                  {!cd.providerMessageId && !cd.error && !cd.providerErrorMessage && (
                                     <div style={{ color: "#64748b", fontSize: "11px" }}>
                                       {cd.deliveryLabel}
                                     </div>

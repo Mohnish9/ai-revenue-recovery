@@ -13,6 +13,7 @@ import { CustomerDetailDrawer } from "./components/CustomerDetailDrawer";
 // Functional Operational Pages
 import { Dashboard } from "./pages/Dashboard";
 import { RecoveryCasesPage } from "./pages/RecoveryCasesPage";
+import { HumanEscalationsPage } from "./pages/HumanEscalationsPage";
 import { FailedPaymentsPage } from "./pages/FailedPaymentsPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { InvoicesPage } from "./pages/InvoicesPage";
@@ -25,6 +26,7 @@ import { SystemHealthPage } from "./pages/SystemHealthPage";
 import { AIAgentPage } from "./pages/AIAgentPage";
 import { ScenarioCenterPage } from "./pages/ScenarioCenterPage";
 import { RecoveryDemoPage } from "./pages/RecoveryDemoPage";
+import { TelemetryQueuePage } from "./pages/TelemetryQueuePage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { CustomerResolvePage } from "./pages/CustomerResolvePage";
@@ -62,8 +64,8 @@ function AuthenticatedApp() {
       setRefreshing(true);
       const res = await fetchDashboardSummary();
       setSummary(res);
-    } catch (e) {
-      console.error("Dashboard summary fetch failed", e);
+    } catch (e: any) {
+      console.warn("Dashboard summary fetch warning:", e?.message || e);
     } finally {
       setRefreshing(false);
     }
@@ -91,10 +93,13 @@ function AuthenticatedApp() {
     }
   }, [user, loading]);
 
-  const navigate = (nextPage: PageKey) => {
+  const navigate = (nextPage: PageKey, caseId?: string) => {
     setPage(nextPage);
     window.history.pushState({}, "", nextPage === "dashboard" ? "/" : `/${nextPage}`);
     setMenuOpen(false);
+    if (caseId) {
+      setSelectedCaseId(caseId);
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -137,6 +142,7 @@ function AuthenticatedApp() {
       onRefresh={handleGlobalRefresh}
       refreshing={refreshing}
       openCasesCount={summary?.openRecoveryCases || 0}
+      openEscalatedCount={summary?.totalEscalated || 0}
     >
       <div key={`${page}-${refreshKey}`}>
         {page === "dashboard" && (
@@ -145,8 +151,17 @@ function AuthenticatedApp() {
             onSelectCase={(id) => setSelectedCaseId(id)}
           />
         )}
+        {page === "telemetry-queue" && (
+          <TelemetryQueuePage onNavigate={navigate} />
+        )}
         {page === "recovery" && (
           <RecoveryCasesPage
+            onSelectCase={(id) => setSelectedCaseId(id)}
+          />
+        )}
+        {page === "human-escalations" && (
+          <HumanEscalationsPage
+            onNavigate={navigate}
             onSelectCase={(id) => setSelectedCaseId(id)}
           />
         )}

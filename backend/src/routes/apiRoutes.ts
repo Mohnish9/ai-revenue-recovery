@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getHealth } from "../controllers/healthController.js";
-import { getDashboard } from "../controllers/dashboardController.js";
+import { getDashboard, getDebugSummaryController } from "../controllers/dashboardController.js";
 import {
   loginController,
   signupController,
@@ -51,7 +51,27 @@ import {
   simulateSandboxIncidentController,
   simulateScenarioController,
   updateCaseStatusController,
+  listHumanEscalationsController,
+  resolveHumanEscalationController,
+  takeOwnershipOfHumanEscalationController,
+  addNoteToHumanEscalationController,
 } from "../controllers/operationsController.js";
+import {
+  getTelemetryQueueController,
+  getTelemetryRecordController,
+  createCustomTelemetryController,
+  analyzeTelemetryController,
+  resetTelemetryQueueController,
+  updateTelemetryContactController,
+  getChannelReadinessController,
+} from "../controllers/telemetryController.js";
+import {
+  getDetailedChannelReadinessController,
+  startPhoneVerificationController,
+  checkPhoneVerificationController,
+  connectWhatsAppSandboxController,
+  updateContactController,
+} from "../controllers/providerController.js";
 
 export const apiRoutes = Router();
 
@@ -74,6 +94,8 @@ apiRoutes.use(requireAuth);
 
 // Core Dashboard
 apiRoutes.get("/dashboard", getDashboard);
+apiRoutes.get("/dashboard/summary", getDashboard);
+apiRoutes.get("/debug/recovery-summary", getDebugSummaryController);
 
 // Customers
 apiRoutes.get("/customers", listCustomersController);
@@ -94,10 +116,15 @@ apiRoutes.get("/subscriptions", listSubscriptionsController);
 // Payment Events (Failed payments, checkout drop-offs, mandates)
 apiRoutes.get("/payment-events", listPaymentEventsController);
 
-// Recovery Cases
+// Recovery Cases & Human Escalations
 apiRoutes.get("/recovery-cases", listRecoveryCasesController);
 apiRoutes.get("/recovery-cases/:id", getRecoveryCaseController);
 apiRoutes.patch("/recovery-cases/:id/status", updateCaseStatusController);
+apiRoutes.get("/human-escalations", listHumanEscalationsController);
+apiRoutes.get("/recovery/human-escalations", listHumanEscalationsController);
+apiRoutes.post("/human-escalations/:id/resolve", resolveHumanEscalationController);
+apiRoutes.post("/human-escalations/:id/take-ownership", takeOwnershipOfHumanEscalationController);
+apiRoutes.post("/human-escalations/:id/notes", addNoteToHumanEscalationController);
 
 // Case Sub-collections & Operations
 apiRoutes.get("/recovery-cases/:id/actions", listActionsController);
@@ -115,10 +142,19 @@ apiRoutes.get("/agent-logs", listAllAgentLogsController);
 apiRoutes.post("/ai/analyze-case/:id", analyzeCaseAIController);
 apiRoutes.post("/ai/chat", chatAIController);
 
+// Provider Channel Readiness & Verification Workflows
+apiRoutes.get("/provider/readiness", getDetailedChannelReadinessController);
+apiRoutes.post("/provider/twilio/verify/start", startPhoneVerificationController);
+apiRoutes.post("/provider/twilio/verify/check", checkPhoneVerificationController);
+apiRoutes.post("/provider/twilio/whatsapp/join", connectWhatsAppSandboxController);
+apiRoutes.post("/provider/twilio/whatsapp/connect", connectWhatsAppSandboxController);
+
 // Dynamic Sandbox Incidents REST API
 apiRoutes.get("/sandbox/incidents", listSandboxIncidentsController);
 apiRoutes.post("/sandbox/incidents", createSandboxIncidentController);
 apiRoutes.get("/sandbox/incidents/:id", getSandboxIncidentController);
+apiRoutes.put("/sandbox/incidents/:id/contact", updateContactController);
+apiRoutes.patch("/sandbox/incidents/:id/contact", updateContactController);
 apiRoutes.post("/sandbox/incidents/:id/analyze", analyzeSandboxIncidentController);
 apiRoutes.post("/sandbox/incidents/:id/actions", executeSandboxIncidentActionController);
 apiRoutes.post("/sandbox/incidents/:id/reassess", reassessSandboxIncidentController);
@@ -131,6 +167,16 @@ apiRoutes.post("/sandbox/incidents/:id/resolve", customerResolveIncidentControll
 apiRoutes.post("/sandbox/incidents/:id/trigger-now", triggerScheduledAttemptNowController);
 apiRoutes.post("/sandbox/incidents/:id/cancel", cancelScheduledRecoveryController);
 apiRoutes.delete("/sandbox/incidents/:id", deleteSandboxIncidentController);
+
+// Synthetic Telemetry Demonstration Queue (Raw Signals -> Gemini Detection -> Sandbox Incident)
+apiRoutes.get("/telemetry/demo-queue", getTelemetryQueueController);
+apiRoutes.get("/telemetry/channel-readiness", getChannelReadinessController);
+apiRoutes.get("/telemetry/:id", getTelemetryRecordController);
+apiRoutes.patch("/telemetry/:id/contact", updateTelemetryContactController);
+apiRoutes.put("/telemetry/:id/contact", updateTelemetryContactController);
+apiRoutes.post("/telemetry", createCustomTelemetryController);
+apiRoutes.post("/telemetry/:id/analyze", analyzeTelemetryController);
+apiRoutes.post("/telemetry/reset-queue", resetTelemetryQueueController);
 
 // Recovery Demo Scenario Types & Sandbox Fast-Path Actions
 apiRoutes.get("/demo/scenario-types", listScenarioTypesController);

@@ -3,8 +3,10 @@ import { useAuth } from "../lib/authContext";
 
 export const navItems: NavItem[] = [
   { key: "dashboard", label: "Overview", icon: "⌂", section: "WORKSPACE" },
+  { key: "telemetry-queue", label: "Telemetry Queue", icon: "📡", badge: "40 DEMO" },
   { key: "recovery-demo", label: "Recovery Demo", icon: "✨", badge: "9 CASES" },
   { key: "recovery", label: "Recovery Cases", icon: "↗", section: "OPERATIONS" },
+  { key: "human-escalations", label: "Human Escalations", icon: "👤" },
   { key: "failed-payments", label: "Failed Payments", icon: "⚠" },
   { key: "transactions", label: "Transactions", icon: "⇄" },
   { key: "invoices", label: "Invoices", icon: "📄" },
@@ -25,9 +27,10 @@ interface SidebarProps {
   menuOpen: boolean;
   onNavigate: (page: PageKey) => void;
   openCasesCount?: number;
+  openEscalatedCount?: number;
 }
 
-export function Sidebar({ page, menuOpen, onNavigate, openCasesCount = 0 }: SidebarProps) {
+export function Sidebar({ page, menuOpen, onNavigate, openCasesCount = 0, openEscalatedCount = 0 }: SidebarProps) {
   const { user, logout } = useAuth();
   let lastSection = "";
 
@@ -70,6 +73,11 @@ export function Sidebar({ page, menuOpen, onNavigate, openCasesCount = 0 }: Side
                 <span>{item.label}</span>
                 {item.key === "recovery" && openCasesCount > 0 && (
                   <span className="nav-badge">{openCasesCount}</span>
+                )}
+                {item.key === "human-escalations" && openEscalatedCount > 0 && (
+                  <span className="nav-badge" style={{ background: "#e11d48", color: "#ffffff" }}>
+                    {openEscalatedCount}
+                  </span>
                 )}
                 {item.key === "agent" && (
                   <span className="nav-badge" style={{ color: "#d6f36b" }}>AI</span>
