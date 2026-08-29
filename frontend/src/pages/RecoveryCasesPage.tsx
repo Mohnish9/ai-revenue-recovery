@@ -358,8 +358,10 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                           const act = executedActions.find((a) => a.attemptNumber === num);
                           const isCurrentPending = !act && num === nextAttemptNum && !isRecovered && !isEscalated;
                           const primaryDisp = act?.channelDispatches?.[0];
-                          const isSent = act?.providerStatus === "SENT" || act?.providerStatus === "DELIVERED" || primaryDisp?.status === "SENT";
-                          const isFailed = act?.providerStatus === "FAILED" || primaryDisp?.status === "FAILED" || act?.status === "CHANNEL_EXECUTION_FAILED";
+                          const deliveryMode = primaryDisp?.deliveryMode || act?.deliveryMode || (primaryDisp?.status === "SENT" ? "REAL" : primaryDisp?.status === "SIMULATED" ? "SIMULATED" : primaryDisp?.status === "FAILED" ? "FAILED" : "SIMULATED");
+                          const isRealSent = deliveryMode === "REAL" && (act?.providerStatus === "SENT" || primaryDisp?.status === "SENT");
+                          const isSimulated = deliveryMode === "SIMULATED" || act?.status === "SIMULATED" || primaryDisp?.status === "SIMULATED";
+                          const isFailed = deliveryMode === "FAILED" || act?.providerStatus === "FAILED" || primaryDisp?.status === "FAILED" || act?.status === "CHANNEL_EXECUTION_FAILED";
 
                           return (
                             <div
@@ -370,15 +372,38 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                                 justifyContent: "space-between",
                                 padding: "4px 8px",
                                 borderRadius: "6px",
-                                background: act ? (isSent ? "#f0fdf4" : "#fef2f2") : isCurrentPending ? "#eef2ff" : "#f1f5f9",
-                                border: `1px solid ${act ? (isSent ? "#bbf7d0" : "#fecaca") : isCurrentPending ? "#c7d2fe" : "#e2e8f0"}`,
+                                background: act
+                                  ? isRealSent
+                                    ? "#f0fdf4"
+                                    : isSimulated
+                                    ? "#f0f9ff"
+                                    : "#fef2f2"
+                                  : isCurrentPending
+                                  ? "#eef2ff"
+                                  : "#f1f5f9",
+                                border: `1px solid ${
+                                  act
+                                    ? isRealSent
+                                      ? "#bbf7d0"
+                                      : isSimulated
+                                      ? "#bae6fd"
+                                      : "#fecaca"
+                                    : isCurrentPending
+                                    ? "#c7d2fe"
+                                    : "#e2e8f0"
+                                }`,
                                 fontSize: "11px",
                               }}
                             >
                               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                                 <strong style={{ color: "#334155" }}>Attempt #{num}:</strong>
                                 {act ? (
-                                  <span style={{ fontWeight: 700, color: isSent ? "#166534" : "#991b1b" }}>
+                                  <span
+                                    style={{
+                                      fontWeight: 700,
+                                      color: isRealSent ? "#166534" : isSimulated ? "#0369a1" : "#991b1b",
+                                    }}
+                                  >
                                     {act.selectedChannel || act.aiChannel || "SMS"}
                                   </span>
                                 ) : isCurrentPending ? (
@@ -398,11 +423,11 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                                       fontWeight: 800,
                                       padding: "1px 6px",
                                       borderRadius: "4px",
-                                      background: isSent ? "#16a34a" : "#dc2626",
+                                      background: isRealSent ? "#16a34a" : isSimulated ? "#0284c7" : "#dc2626",
                                       color: "#ffffff",
                                     }}
                                   >
-                                    {isSent ? "SENT" : "FAILED"}
+                                    {isRealSent ? "REAL (SENT)" : isSimulated ? "SIMULATED" : "FAILED"}
                                   </span>
                                 ) : isCurrentPending ? (
                                   <span

@@ -5,7 +5,10 @@ import {
   triggerScheduledAttemptNowApi,
   cancelScheduledRecoveryApi,
   deleteSandboxIncidentApi,
+  fetchDemoTestContactApi,
+  type DemoTestContactConfig,
 } from "../lib/api";
+import { DemoTestContactModal } from "./DemoTestContactModal";
 
 interface AutonomousRecoveryWorkspaceProps {
   incident: SandboxIncidentResponse;
@@ -25,6 +28,16 @@ export function AutonomousRecoveryWorkspace({
   const [activeTab, setActiveTab] = useState<"DECISION_TRACE" | "OUTREACH" | "PROVIDER_DEBUG" | "TIMELINE" | "AI_REASONING" | "CONTEXT">("DECISION_TRACE");
   const [selectedChannel, setSelectedChannel] = useState<"WHATSAPP" | "SMS" | "EMAIL">("WHATSAPP");
   const [copiedLink, setCopiedLink] = useState(false);
+  const [testContactModalOpen, setTestContactModalOpen] = useState(false);
+  const [testContactConfig, setTestContactConfig] = useState<DemoTestContactConfig | null>(null);
+
+  useEffect(() => {
+    fetchDemoTestContactApi()
+      .then((res) => {
+        if (res.data) setTestContactConfig(res.data);
+      })
+      .catch(console.warn);
+  }, []);
 
   const record = incident.record || (incident as any);
   const scheduler = record?.scheduler || (incident.incident as any)?.scheduler;
@@ -430,7 +443,25 @@ export function AutonomousRecoveryWorkspace({
             )}
           </div>
 
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              onClick={() => setTestContactModalOpen(true)}
+              className="btn btn-secondary btn-sm"
+              style={{
+                background: testContactConfig?.enabled ? "rgba(16, 185, 129, 0.2)" : "rgba(255, 255, 255, 0.12)",
+                borderColor: testContactConfig?.enabled ? "#10b981" : "rgba(255, 255, 255, 0.3)",
+                color: testContactConfig?.enabled ? "#6ee7b7" : "#ffffff",
+                fontSize: "11.5px",
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+              title="Configure real Twilio & Resend test destination while keeping synthetic customer telemetry preserved"
+            >
+              <span>🧪</span>
+              <span>Test Contact Router {testContactConfig?.enabled ? "(Active)" : "(Config)"}</span>
+            </button>
             {onNavigate && (
               <button
                 onClick={() => {
@@ -660,8 +691,10 @@ export function AutonomousRecoveryWorkspace({
               {allActions.map((act: any, actIdx: number) => {
                 const primaryDispatch: OutboundDeliveryResult | undefined = (act.channelDispatches || [])[0];
                 const channel = (act.selectedChannel || act.aiChannel || primaryDispatch?.channel || "SMS").toUpperCase();
-                const isSent = act.status === "EXECUTED" || primaryDispatch?.status === "SENT" || primaryDispatch?.status === "DELIVERED";
-                const isFailed = act.status === "CHANNEL_EXECUTION_FAILED" || primaryDispatch?.status === "FAILED";
+                const deliveryMode = primaryDispatch?.deliveryMode || act.deliveryMode || (primaryDispatch?.status === "SENT" ? "REAL" : primaryDispatch?.status === "SIMULATED" ? "SIMULATED" : primaryDispatch?.status === "FAILED" ? "FAILED" : "SIMULATED");
+                const isRealSent = deliveryMode === "REAL" && (act.providerStatus === "SENT" || primaryDispatch?.status === "SENT");
+                const isSimulated = deliveryMode === "SIMULATED" || act.status === "SIMULATED" || primaryDispatch?.status === "SIMULATED";
+                const isFailed = deliveryMode === "FAILED" || act.status === "CHANNEL_EXECUTION_FAILED" || primaryDispatch?.status === "FAILED";
                 const provider = act.provider || (channel === "EMAIL" ? "Resend" : "Twilio");
                 const providerId = act.providerMessageId || primaryDispatch?.providerMessageId;
 
@@ -675,7 +708,7 @@ export function AutonomousRecoveryWorkspace({
                     style={{
                       background: "#ffffff",
                       borderRadius: "12px",
-                      border: `1.5px solid ${isFailed ? "#fca5a5" : "#e2e8f0"}`,
+                      border: `1.5px solid ${isFailed ? "#fca5a5" : isRealSent ? "#86efac" : "#e2e8f0"}`,
                       boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
                       overflow: "hidden",
                     }}
@@ -779,41 +812,84 @@ export function AutonomousRecoveryWorkspace({
                       {/* Right: Provider Telemetry & Next Decision */}
                       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                         {/* Provider Execution Outcome */}
-                        <div style={{ background: "#fafafa", borderRadius: "8px", padding: "14px", border: "1px solid #e2e8f0" }}>
-                          <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase", marginBottom: "8px" }}>
-                            ⚡ Provider Execution Telemetry
+                        <div style={{ background: "#fafafa", borderRadius: "8px", padding: "14px", border: `1px solid ${isFailed ? "#fecaca" : isRealSent ? "#bbf7d0" : "#e2e8f0"}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                            <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase" }}>
+                              ⚡ Provider Execution Telemetry
+                            </div>
+                            <span
+                              style={{
+                                fontSize: "10px",
+                                fontWeight: 800,
+                                padding: "2px 8px",
+                                borderRadius: "4px",
+                                background: isRealSent ? "#16a34a" : isSimulated ? "#0284c7" : "#dc2626",
+                                color: "#ffffff",
+                              }}
+                            >
+                              {isRealSent ? "REAL DISPATCH" : isSimulated ? "SIMULATED" : "FAILED"}
+                            </span>
                           </div>
+
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "12px" }}>
                             <div>
                               <span style={{ color: "#64748b" }}>Provider:</span>{" "}
                               <strong>{provider}</strong>
                             </div>
                             <div>
-                              <span style={{ color: "#64748b" }}>Status:</span>{" "}
-                              <span
-                                className={`status-pill ${isSent ? "success" : isFailed ? "danger" : "info"}`}
-                                style={{ fontSize: "9.5px", padding: "1px 6px" }}
-                              >
-                                {primaryDispatch?.status || act.providerStatus || act.status}
-                              </span>
+                              <span style={{ color: "#64748b" }}>Delivery State:</span>{" "}
+                              <strong style={{ color: isRealSent ? "#16a34a" : isSimulated ? "#0284c7" : "#dc2626" }}>
+                                {primaryDispatch?.status || act.providerStatus || (isRealSent ? "SENT" : isSimulated ? "SIMULATED" : "FAILED")}
+                              </strong>
                             </div>
+
+                            <div style={{ gridColumn: "span 2", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                              <span style={{ color: "#64748b" }}>Recipient:</span>
+                              <code style={{ fontSize: "11.5px", fontWeight: 700, color: "#0f172a" }}>
+                                {primaryDispatch?.actualDestination || primaryDispatch?.destination || (act.selectedChannel === "EMAIL" ? customerEmail : customerPhone)}
+                              </code>
+                              {primaryDispatch?.routedToTestContact ? (
+                                <span style={{ fontSize: "9.5px", fontWeight: 800, padding: "2px 6px", borderRadius: "4px", background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>
+                                  DEMO CONTACT
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: "9.5px", fontWeight: 800, padding: "2px 6px", borderRadius: "4px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0" }}>
+                                  REAL CUSTOMER
+                                </span>
+                              )}
+                            </div>
+
+                            {primaryDispatch?.routedToTestContact && (
+                              <div style={{ gridColumn: "span 2", background: "#fefce8", border: "1px solid #fef08a", padding: "6px 8px", borderRadius: "6px", fontSize: "11px", color: "#854d0e" }}>
+                                🧪 Demo Contact Override: Routed to <strong>{primaryDispatch.testContactTarget || primaryDispatch.actualDestination}</strong> (Customer: {customerName})
+                              </div>
+                            )}
+
                             <div style={{ gridColumn: "span 2" }}>
-                              <span style={{ color: "#64748b" }}>Provider ID / SID:</span>{" "}
-                              <code style={{ fontSize: "11px", color: providerId ? "#0f172a" : "#94a3b8" }}>
-                                {providerId || (isFailed ? "Failed" : "Simulated Gateway")}
+                              <span style={{ color: "#64748b" }}>Provider SID / ID:</span>{" "}
+                              <code style={{ fontSize: "11px", color: providerId ? "#0f172a" : "#64748b", fontWeight: providerId ? 700 : 400 }}>
+                                {providerId ? providerId : isSimulated ? "None (Simulated Outcome)" : "Rejected by Provider"}
                               </code>
                             </div>
+
                             {(primaryDispatch?.providerErrorCode || act.providerErrorCode) && (
                               <div style={{ gridColumn: "span 2" }}>
-                                <span style={{ color: "#64748b" }}>Error Code:</span>{" "}
+                                <span style={{ color: "#64748b" }}>Twilio / Provider Error Code:</span>{" "}
                                 <code style={{ fontSize: "11px", color: "#dc2626", background: "#fef2f2", padding: "2px 6px", borderRadius: "4px" }}>
                                   {primaryDispatch?.providerErrorCode || act.providerErrorCode}
                                 </code>
                               </div>
                             )}
+
                             {(primaryDispatch?.providerErrorMessage || primaryDispatch?.error || act.providerErrorMessage) && (
                               <div style={{ gridColumn: "span 2", color: "#dc2626", fontSize: "11px", background: "#fef2f2", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fca5a5", lineHeight: "1.4" }}>
-                                <strong>Provider Diagnostic:</strong> {primaryDispatch?.providerErrorMessage || primaryDispatch?.error || act.providerErrorMessage}
+                                <strong>Provider Rejection Diagnostic:</strong> {primaryDispatch?.providerErrorMessage || primaryDispatch?.error || act.providerErrorMessage}
+                              </div>
+                            )}
+
+                            {isSimulated && !providerId && !primaryDispatch?.error && (
+                              <div style={{ gridColumn: "span 2", color: "#0369a1", fontSize: "11px", background: "#f0f9ff", padding: "6px 8px", borderRadius: "6px", border: "1px solid #bae6fd" }}>
+                                ℹ️ Simulation fallback active — configure real Twilio credentials or verified test recipient to send real provider dispatches.
                               </div>
                             )}
                           </div>
@@ -1194,9 +1270,10 @@ export function AutonomousRecoveryWorkspace({
                         </thead>
                         <tbody>
                           {dispatches.map((cd, cdIdx) => {
-                            const isSent = cd.status === "SENT";
-                            const isFailed = cd.status === "FAILED";
-                            const isSim = cd.status === "SIMULATED";
+                            const deliveryMode = cd.deliveryMode || (cd.status === "SENT" ? "REAL" : cd.status === "SIMULATED" ? "SIMULATED" : cd.status === "FAILED" ? "FAILED" : "SIMULATED");
+                            const isRealSent = deliveryMode === "REAL" && cd.status === "SENT";
+                            const isFailed = deliveryMode === "FAILED" || cd.status === "FAILED";
+                            const isSim = deliveryMode === "SIMULATED" || cd.status === "SIMULATED";
 
                             return (
                               <tr key={cdIdx} style={{ borderBottom: "1px solid #f1f5f9" }}>
@@ -1207,14 +1284,27 @@ export function AutonomousRecoveryWorkspace({
                                   {cd.channel === "EMAIL" ? "Resend API" : cd.channel === "WHATSAPP" ? "Twilio WhatsApp" : "Twilio SMS"}
                                 </td>
                                 <td style={{ padding: "10px", fontFamily: "monospace", color: "#475569" }}>
-                                  {cd.destination || cd.recipient || cd.to || "—"}
+                                  <div style={{ fontWeight: 700, color: "#0f172a" }}>
+                                    {cd.actualDestination || cd.destination || cd.recipient || cd.to || "—"}
+                                  </div>
+                                  <div style={{ marginTop: "4px" }}>
+                                    {cd.routedToTestContact ? (
+                                      <span style={{ fontSize: "9.5px", fontWeight: 800, padding: "2px 6px", borderRadius: "4px", background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>
+                                        DEMO CONTACT
+                                      </span>
+                                    ) : (
+                                      <span style={{ fontSize: "9.5px", fontWeight: 800, padding: "2px 6px", borderRadius: "4px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0" }}>
+                                        REAL CUSTOMER
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td style={{ padding: "10px" }}>
                                   <span
-                                    className={`status-pill ${isSent ? "success" : isFailed ? "danger" : isSim ? "info" : "purple"}`}
-                                    style={{ fontSize: "10px", padding: "2px 8px" }}
+                                    className={`status-pill ${isRealSent ? "success" : isFailed ? "danger" : isSim ? "info" : "purple"}`}
+                                    style={{ fontSize: "10px", padding: "2px 8px", fontWeight: 800 }}
                                   >
-                                    {cd.status}
+                                    {isRealSent ? "REAL (SENT)" : isSim ? "SIMULATED" : "FAILED"}
                                   </span>
                                 </td>
                                 <td style={{ padding: "10px" }}>
@@ -1225,7 +1315,7 @@ export function AutonomousRecoveryWorkspace({
                                   )}
                                   {cd.providerErrorCode && (
                                     <div style={{ color: "#dc2626", fontSize: "11px", marginTop: "2px" }}>
-                                      Code: <strong>{cd.providerErrorCode}</strong>
+                                      Twilio Code: <strong>{cd.providerErrorCode}</strong>
                                     </div>
                                   )}
                                   {(cd.providerErrorMessage || cd.error) && (
@@ -1433,6 +1523,13 @@ export function AutonomousRecoveryWorkspace({
           </div>
         </div>
       )}
+
+      {/* Demo Test Contact Configuration Modal */}
+      <DemoTestContactModal
+        isOpen={testContactModalOpen}
+        onClose={() => setTestContactModalOpen(false)}
+        onConfigSaved={(updatedCfg) => setTestContactConfig(updatedCfg)}
+      />
     </div>
   );
 }

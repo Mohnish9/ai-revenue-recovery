@@ -1,13 +1,12 @@
 import type { PageKey } from "../lib/types";
-import { Sidebar } from "../components/Sidebar";
-import { Topbar } from "../components/Topbar";
+import { TopNav } from "../components/TopNav";
 
 interface AppLayoutProps {
   page: PageKey;
-  menuOpen: boolean;
+  menuOpen?: boolean;
   onNavigate: (page: PageKey) => void;
-  onOpenMenu: () => void;
-  onCloseMenu: () => void;
+  onOpenMenu?: () => void;
+  onCloseMenu?: () => void;
   onRefresh?: () => void;
   refreshing?: boolean;
   openCasesCount?: number;
@@ -17,10 +16,7 @@ interface AppLayoutProps {
 
 export function AppLayout({
   page,
-  menuOpen,
   onNavigate,
-  onOpenMenu,
-  onCloseMenu,
   onRefresh,
   refreshing,
   openCasesCount = 0,
@@ -29,21 +25,15 @@ export function AppLayout({
 }: AppLayoutProps) {
   return (
     <div className="app-shell">
-      <Sidebar
+      <TopNav
         page={page}
-        menuOpen={menuOpen}
         onNavigate={onNavigate}
+        onRefresh={onRefresh}
+        refreshing={refreshing}
         openCasesCount={openCasesCount}
         openEscalatedCount={openEscalatedCount}
       />
-      {menuOpen && <button className="scrim" aria-label="Close navigation" onClick={onCloseMenu} />}
       <main className="main-content">
-        <Topbar
-          page={page}
-          onToggleMenu={menuOpen ? onCloseMenu : onOpenMenu}
-          onRefresh={onRefresh}
-          refreshing={refreshing}
-        />
         {children}
       </main>
     </div>

@@ -17,6 +17,7 @@ const port = Number(process.env.PORT ?? 3000);
 app.set("etag", false);
 app.disable("x-powered-by");
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // CORS & Preflight handler
 app.use((request, response, next) => {
@@ -44,9 +45,14 @@ app.use("/api", (_req, res, next) => {
 
 // API Routes (must precede SPA fallback)
 app.use("/api", apiRoutes);
+// Also mount direct endpoints as fallback to prevent any unhandled API endpoints from reaching Vite SPA middleware
+app.use("/telemetry", apiRoutes);
 
 // Strict safety boundary: Guarantee that any unhandled /api path returns JSON 404 and never falls through to Vite/SPA HTML
 app.all("/api/*", (_request, response) => {
+  response.status(404).json({ error: "API route not found" });
+});
+app.all("/api", (_request, response) => {
   response.status(404).json({ error: "API route not found" });
 });
 

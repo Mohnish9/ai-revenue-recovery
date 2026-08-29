@@ -18,6 +18,7 @@ export interface StoredActionRecord {
   aiStrategy?: string;
   aiChannel?: "EMAIL" | "WHATSAPP" | "SMS" | string;
   status: string;
+  deliveryMode?: "REAL" | "SIMULATED" | "FAILED";
   gatewayLatency: string;
   pspResponseCode: string;
   projectedRecovery: number;
@@ -120,6 +121,8 @@ export interface StoredSandboxIncident {
     detail: string;
   }>;
   actions: StoredActionRecord[];
+  last_voice_script?: string;
+  last_voice_script_at?: string;
   escalationDossier?: any;
   recoveryDossier?: any;
   created_at: string;
@@ -572,7 +575,55 @@ Respond strictly in valid JSON matching this schema:
       });
     }
 
-    const channelDispatches = [primaryDispatch];
+    const channelDispatches: OutboundDeliveryResult[] = [primaryDispatch];
+
+    // Omnichannel Dynamic Fallback: If primary channel experienced a provider trial rejection or delivery failure
+    // (e.g. 572002, 572006, 21608, 21654, 63007, 21211, etc.),
+    // automatically attempt the fallback channel (e.g. Email / WhatsApp / SMS) so customer outreach reaches the customer.
+    let effectiveDispatch = primaryDispatch;
+    if (primaryDispatch.status === "FAILED") {
+      console.info(`[AutonomousEngine] Primary channel ${chosenChannel} delivery failed (${primaryDispatch.providerErrorCode || primaryDispatch.error}). Executing automated multi-channel fallback...`);
+      
+      let fallbackDispatch: OutboundDeliveryResult | null = null;
+      if (chosenChannel !== "EMAIL" && item.customer_email) {
+        fallbackDispatch = await sendEmailMessage({
+          toEmail: item.customer_email,
+          customerName: item.customer_name,
+          subject: emailSubject,
+          bodyText: emailBody,
+          incidentId: item.id,
+          paymentUrl,
+        });
+      } else if (chosenChannel !== "WHATSAPP" && item.customer_phone) {
+        fallbackDispatch = await sendWhatsAppMessage({
+          toPhone: item.customer_phone,
+          customerName: item.customer_name,
+          messageBody: waBody,
+          incidentId: item.id,
+          paymentUrl,
+          amount: `${item.currency} ${item.amount.toLocaleString()}`,
+          incidentContext: `${item.scenario_type_name} (${item.failure_reason})`,
+        });
+      } else if (chosenChannel !== "SMS" && item.customer_phone) {
+        fallbackDispatch = await sendSmsMessage({
+          toPhone: item.customer_phone,
+          customerName: item.customer_name,
+          messageBody: smsBody,
+          incidentId: item.id,
+          paymentUrl,
+          amount: `${item.currency} ${item.amount.toLocaleString()}`,
+          incidentContext: `${item.scenario_type_name} (${item.failure_reason})`,
+        });
+      }
+
+      if (fallbackDispatch) {
+        channelDispatches.push(fallbackDispatch);
+        if (fallbackDispatch.status === "SENT" || fallbackDispatch.status === "SIMULATED") {
+          effectiveDispatch = fallbackDispatch;
+        }
+      }
+    }
+
     const prob = aiDecision.recoveryProbability || 0.8;
     const projectedRecovery = Math.round(item.amount * prob);
 
@@ -583,13 +634,18 @@ Respond strictly in valid JSON matching this schema:
         ? waBody
         : smsBody;
 
-    const isSuccess = primaryDispatch.status === "SENT" || primaryDispatch.status === "DELIVERED" || primaryDispatch.status === "SIMULATED";
-    const providerStatus = primaryDispatch.status;
-    const providerName = primaryDispatch.channel === "EMAIL" ? "Resend" : (chosenChannel === "WHATSAPP" ? "Twilio WhatsApp" : "Twilio SMS");
-    const providerId = primaryDispatch.providerMessageId || undefined;
-    const providerErrorCode = primaryDispatch.providerErrorCode;
-    const providerErrorMessage = primaryDispatch.providerErrorMessage || primaryDispatch.error;
-    const httpStatus = primaryDispatch.httpStatus;
+    const deliveryMode = effectiveDispatch.deliveryMode || (effectiveDispatch.status === "SENT" ? "REAL" : effectiveDispatch.status === "SIMULATED" ? "SIMULATED" : "FAILED");
+    const isRealSent = deliveryMode === "REAL" && effectiveDispatch.status === "SENT";
+    const isSimulated = deliveryMode === "SIMULATED" || effectiveDispatch.status === "SIMULATED";
+    const isFailed = deliveryMode === "FAILED" || effectiveDispatch.status === "FAILED";
+
+    const actionStatus = isRealSent ? "EXECUTED" : isSimulated ? "SIMULATED" : "CHANNEL_EXECUTION_FAILED";
+    const providerStatus = isRealSent ? "SENT" : isSimulated ? "SIMULATED" : "FAILED";
+    const providerName = effectiveDispatch.provider || (chosenChannel === "EMAIL" ? "Resend" : chosenChannel === "WHATSAPP" ? "Twilio WhatsApp" : "Twilio SMS");
+    const providerId = effectiveDispatch.providerMessageId || undefined;
+    const providerErrorCode = effectiveDispatch.providerErrorCode || primaryDispatch.providerErrorCode;
+    const providerErrorMessage = effectiveDispatch.providerErrorMessage || primaryDispatch.providerErrorMessage || effectiveDispatch.error;
+    const httpStatus = effectiveDispatch.httpStatus;
 
     const actionRecord: StoredActionRecord = {
       id: `act-att-${attemptNumber}-${Date.now().toString().slice(-4)}`,
@@ -600,7 +656,8 @@ Respond strictly in valid JSON matching this schema:
       aiStrategy: aiDecision.recommendedAction || "Autonomous Outreach",
       aiChannel: chosenChannel,
       selectedChannel: chosenChannel,
-      status: isSuccess ? "EXECUTED" : "CHANNEL_EXECUTION_FAILED",
+      status: actionStatus,
+      deliveryMode,
       gatewayLatency: `${Math.floor(Math.random() * 40 + 85)}ms`,
       pspResponseCode: aiDecision.pspResponseCode || "DISPATCHED_200",
       projectedRecovery,
@@ -617,12 +674,16 @@ Respond strictly in valid JSON matching this schema:
       httpStatus,
       executedAt: now.toISOString(),
       channelDispatches,
-      details: isSuccess
-        ? `Dispatched ${chosenChannel} via ${providerName} (${primaryDispatch.deliveryLabel}). SID / ID: ${providerId || "Simulated"}. Awaiting customer resolution.`
-        : `${chosenChannel} FAILED via ${providerName}. ${providerErrorCode ? `Error Code: ${providerErrorCode}. ` : ""}Reason: ${providerErrorMessage || primaryDispatch.error}. Provider feedback recorded for Gemini Attempt #${attemptNumber + 1}.`,
-      result: isSuccess
-        ? "Message dispatched to customer — awaiting settlement"
-        : `${chosenChannel} delivery failed at provider (${providerErrorCode || "ERROR"}). Escalating to alternate channel.`,
+      details: isRealSent
+        ? `Real provider dispatch via ${providerName} (${primaryDispatch.deliveryLabel}). SID: ${providerId}. Awaiting customer resolution.`
+        : isSimulated
+        ? `Simulation execution (${primaryDispatch.deliveryLabel}). No real provider outreach was dispatched.`
+        : `Provider outreach FAILED via ${providerName}. ${providerErrorCode ? `Error Code: ${providerErrorCode}. ` : ""}Diagnostic: ${providerErrorMessage || primaryDispatch.error}. Provider feedback recorded for Gemini Attempt #${attemptNumber + 1}.`,
+      result: isRealSent
+        ? `Real message delivered to provider — SID: ${providerId}`
+        : isSimulated
+        ? "Simulation outcome recorded — no real message sent"
+        : `${chosenChannel} delivery rejected by provider (${providerErrorCode || "ERROR"}). Escalating to alternate channel.`,
       nextDecision:
         attemptNumber < 3
           ? `Schedule Attempt #${attemptNumber + 1} at T+5m for Gemini dynamic channel reassessment`
@@ -641,7 +702,7 @@ Respond strictly in valid JSON matching this schema:
       type: "ATTEMPT",
       title: `Attempt #${attemptNumber} Executed • ${actionRecord.actionTitle}`,
       description: actionRecord.details || "",
-      status: isSuccess ? "COMPLETED" : "FAILED",
+      status: actionRecord.status === "CHANNEL_EXECUTION_FAILED" ? "FAILED" : "COMPLETED",
       attemptNumber,
       channelDispatches,
       details: {

@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import type { PageKey, DashboardSummary } from "./lib/types";
 import { fetchDashboardSummary } from "./lib/api";
-import { navItems } from "./components/Sidebar";
 import { AppLayout } from "./layouts/AppLayout";
 import { AuthProvider, useAuth } from "./lib/authContext";
 import { LoginPage } from "./pages/LoginPage";
@@ -41,9 +40,31 @@ function getResolveIncidentId(): string | null {
   return searchParams.get("resolve") || searchParams.get("incidentId") || null;
 }
 
+const VALID_PAGE_KEYS: PageKey[] = [
+  "dashboard",
+  "telemetry-queue",
+  "recovery",
+  "human-escalations",
+  "failed-payments",
+  "transactions",
+  "invoices",
+  "subscriptions",
+  "checkout-dropoffs",
+  "mandates",
+  "customers",
+  "policy-rules",
+  "health",
+  "agent",
+  "scenarios",
+  "recovery-demo",
+  "analytics",
+  "audit",
+];
+
 function getInitialPage(): PageKey {
-  const path = window.location.pathname.replace(/^\/+/, "") as PageKey;
-  return navItems.some((item) => item.key === path) ? path : "dashboard";
+  const path = window.location.pathname.replace(/^\/+/, "").split("/")[0] as PageKey;
+  if (path === ("overview" as any) || path === ("" as any)) return "dashboard";
+  return VALID_PAGE_KEYS.includes(path) ? path : "dashboard";
 }
 
 function AuthenticatedApp() {
@@ -89,13 +110,16 @@ function AuthenticatedApp() {
     if (!loading) {
       if (!user && window.location.pathname !== "/login") {
         window.history.replaceState({}, "", "/login");
+      } else if (user && (window.location.pathname === "/login" || window.location.pathname === "/")) {
+        window.history.replaceState({}, "", "/overview");
       }
     }
   }, [user, loading]);
 
   const navigate = (nextPage: PageKey, caseId?: string) => {
     setPage(nextPage);
-    window.history.pushState({}, "", nextPage === "dashboard" ? "/" : `/${nextPage}`);
+    const route = nextPage === "dashboard" ? "/overview" : `/${nextPage}`;
+    window.history.pushState({}, "", route);
     setMenuOpen(false);
     if (caseId) {
       setSelectedCaseId(caseId);

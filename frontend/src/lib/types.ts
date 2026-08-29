@@ -483,14 +483,16 @@ export interface StructuredAIAnalysis {
 
 export interface OutboundDeliveryResult {
   channel: "WHATSAPP" | "SMS" | "EMAIL";
-  provider: "TWILIO" | "RESEND" | "SIMULATION_ENGINE";
+  provider: "TWILIO" | "RESEND" | "SIMULATION_ENGINE" | string;
   status: "DELIVERED" | "SENT" | "SIMULATED" | "FAILED";
+  deliveryMode?: "REAL" | "SIMULATED" | "FAILED";
   deliveryLabel: string;
   isRealDispatch: boolean;
   to?: string;
   destination?: string;
   recipient?: string;
   recipientName?: string;
+  actualDestination?: string;
   messagePreview?: string;
   providerMessageId?: string;
   providerStatus?: string;
@@ -499,6 +501,8 @@ export interface OutboundDeliveryResult {
   httpStatus?: number;
   deliveredAt?: string;
   dispatchedAt?: string;
+  routedToTestContact?: boolean;
+  testContactTarget?: string;
   content?: {
     subject?: string;
     body: string;
@@ -544,6 +548,7 @@ export interface SandboxActionRecord {
   aiChannel?: string;
   selectedChannel?: string;
   status: string;
+  deliveryMode?: "REAL" | "SIMULATED" | "FAILED";
   gatewayLatency: string;
   pspResponseCode: string;
   projectedRecovery: number;

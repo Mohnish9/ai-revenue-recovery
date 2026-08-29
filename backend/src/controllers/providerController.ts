@@ -6,6 +6,33 @@ import {
   connectWhatsAppSandbox,
   updateContactForIncidentOrTelemetry,
 } from "../services/providerService.js";
+import {
+  getDemoTestContactConfig,
+  updateDemoTestContactConfig,
+} from "../services/demoTestContactService.js";
+
+export async function getDemoTestContactController(_req: Request, res: Response) {
+  try {
+    const config = getDemoTestContactConfig();
+    return res.json({ success: true, data: config });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function updateDemoTestContactController(req: Request, res: Response) {
+  try {
+    const updates = req.body;
+    const config = updateDemoTestContactConfig(updates);
+    return res.json({
+      success: true,
+      message: "Demo test contact configuration updated successfully.",
+      data: config,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+}
 
 export async function getDetailedChannelReadinessController(req: Request, res: Response) {
   try {

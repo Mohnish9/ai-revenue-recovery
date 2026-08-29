@@ -222,50 +222,63 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
   });
 
   return (
-    <div className="page-container" style={{ paddingBottom: "60px" }}>
+    <div className="telemetry-queue-wrapper">
       {/* Top Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
-            <h1 style={{ fontSize: "22px", fontWeight: 700, margin: 0, color: "#f8fafc" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          flexWrap: "wrap",
+          gap: "16px",
+          marginBottom: "24px",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: "280px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px", flexWrap: "wrap" }}>
+            <h1 style={{ fontSize: "24px", fontWeight: 800, margin: 0, color: "#f8fafc", letterSpacing: "-0.5px" }}>
               Synthetic Telemetry Queue
             </h1>
             <span
               style={{
-                background: "rgba(214, 243, 107, 0.15)",
-                color: "#d6f36b",
-                border: "1px solid rgba(214, 243, 107, 0.3)",
-                padding: "2px 8px",
+                background: "rgba(216, 238, 155, 0.15)",
+                color: "#d8ee9b",
+                border: "1px solid rgba(216, 238, 155, 0.4)",
+                padding: "3px 10px",
                 borderRadius: "12px",
                 fontSize: "11px",
-                fontWeight: 600,
+                fontWeight: 700,
+                fontFamily: "'DM Mono', monospace",
+                letterSpacing: "0.5px",
+                whiteSpace: "nowrap",
               }}
             >
               40 DEMO SIGNALS
             </span>
           </div>
-          <p style={{ margin: 0, fontSize: "13px", color: "#94a3b8", maxWidth: "800px" }}>
+          <p style={{ margin: 0, fontSize: "13px", color: "#94a3b8", maxWidth: "840px", lineHeight: "1.5" }}>
             Real-time observable telemetry pipeline. Start AI diagnosis one by one to verify Gemini's ability to classify revenue risk from raw event streams, gateway codes, and session signals.
           </p>
         </div>
-        <div style={{ display: "flex", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
           <button
             onClick={() => setShowCreateModal(true)}
             style={{
               background: "#1e293b",
               border: "1px solid #334155",
-              color: "#e2e8f0",
-              padding: "7px 14px",
-              borderRadius: "6px",
-              fontSize: "12px",
-              fontWeight: 500,
+              color: "#f1f5f9",
+              padding: "8px 16px",
+              borderRadius: "7px",
+              fontSize: "12.5px",
+              fontWeight: 600,
               cursor: "pointer",
-              display: "flex",
+              display: "inline-flex",
               alignItems: "center",
               gap: "6px",
             }}
           >
-            <span>+</span> Custom Signal
+            <span style={{ fontSize: "14px", fontWeight: 700, color: "#d8ee9b" }}>+</span>
+            <span>Custom Signal</span>
           </button>
           <button
             onClick={handleResetQueue}
@@ -274,14 +287,18 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
               background: "transparent",
               border: "1px solid #334155",
               color: "#94a3b8",
-              padding: "7px 12px",
-              borderRadius: "6px",
-              fontSize: "12px",
-              fontWeight: 500,
+              padding: "8px 14px",
+              borderRadius: "7px",
+              fontSize: "12.5px",
+              fontWeight: 600,
               cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
             }}
           >
-            ↻ Reset Queue
+            <span>↻</span>
+            <span>Reset Queue</span>
           </button>
         </div>
       </div>
@@ -292,10 +309,10 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
             background: "rgba(22, 101, 52, 0.2)",
             border: "1px solid rgba(34, 197, 94, 0.4)",
             color: "#4ade80",
-            padding: "10px 14px",
-            borderRadius: "6px",
+            padding: "12px 16px",
+            borderRadius: "7px",
             fontSize: "13px",
-            marginBottom: "16px",
+            marginBottom: "20px",
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
@@ -318,9 +335,9 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
             border: "1px solid rgba(239, 68, 68, 0.35)",
             color: "#fca5a5",
             padding: "12px 16px",
-            borderRadius: "6px",
+            borderRadius: "7px",
             fontSize: "13px",
-            marginBottom: "16px",
+            marginBottom: "20px",
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
@@ -346,83 +363,82 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
       )}
 
       {/* KPI Metrics Dashboard Bar */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: "12px",
-          marginBottom: "20px",
-        }}
-      >
-        <div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "14px 16px", borderRadius: "8px" }}>
-          <span style={{ fontSize: "11px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+      <div className="telemetry-metrics-grid">
+        <div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "16px 18px", borderRadius: "8px", display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: "104px" }}>
+          <span style={{ fontSize: "11px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>
             Total Signals
           </span>
-          <div style={{ fontSize: "22px", fontWeight: 700, color: "#f8fafc", marginTop: "4px" }}>
+          <div style={{ fontSize: "24px", fontWeight: 800, color: "#f8fafc", marginTop: "6px", letterSpacing: "-0.5px" }}>
             {summary.totalSignals}
           </div>
           <span style={{ fontSize: "11px", color: "#64748b" }}>Raw telemetry records</span>
         </div>
 
-        <div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "14px 16px", borderRadius: "8px" }}>
-          <span style={{ fontSize: "11px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+        <div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "16px 18px", borderRadius: "8px", display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: "104px" }}>
+          <span style={{ fontSize: "11px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>
             Awaiting AI
           </span>
-          <div style={{ fontSize: "22px", fontWeight: 700, color: "#e2e8f0", marginTop: "4px" }}>
+          <div style={{ fontSize: "24px", fontWeight: 800, color: "#e2e8f0", marginTop: "6px", letterSpacing: "-0.5px" }}>
             {summary.waitingCount}
           </div>
-          <span style={{ fontSize: "11px", color: "#eab308" }}>Ready for operator start</span>
+          <span style={{ fontSize: "11px", color: "#eab308", fontWeight: 600 }}>Ready for operator start</span>
         </div>
 
-        <div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "14px 16px", borderRadius: "8px" }}>
-          <span style={{ fontSize: "11px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+        <div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "16px 18px", borderRadius: "8px", display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: "104px" }}>
+          <span style={{ fontSize: "11px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>
             AI Diagnosed
           </span>
-          <div style={{ fontSize: "22px", fontWeight: 700, color: "#38bdf8", marginTop: "4px" }}>
+          <div style={{ fontSize: "24px", fontWeight: 800, color: "#38bdf8", marginTop: "6px", letterSpacing: "-0.5px" }}>
             {summary.analyzedCount}
           </div>
-          <span style={{ fontSize: "11px", color: "#38bdf8" }}>Classified by Gemini</span>
+          <span style={{ fontSize: "11px", color: "#38bdf8", fontWeight: 600 }}>Classified by Gemini</span>
         </div>
 
-        <div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "14px 16px", borderRadius: "8px" }}>
-          <span style={{ fontSize: "11px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+        <div style={{ background: "#0f172a", border: "1px solid #1e293b", padding: "16px 18px", borderRadius: "8px", display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: "104px" }}>
+          <span style={{ fontSize: "11px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>
             Recovered / Resolved
           </span>
-          <div style={{ fontSize: "22px", fontWeight: 700, color: "#4ade80", marginTop: "4px" }}>
+          <div style={{ fontSize: "24px", fontWeight: 800, color: "#4ade80", marginTop: "6px", letterSpacing: "-0.5px" }}>
             {summary.recoveredCount}
           </div>
-          <span style={{ fontSize: "11px", color: "#4ade80" }}>Revenue recovered</span>
+          <span style={{ fontSize: "11px", color: "#4ade80", fontWeight: 600 }}>Revenue recovered</span>
         </div>
 
         <div
           style={{
-            background: "rgba(214, 243, 107, 0.05)",
-            border: "1px solid rgba(214, 243, 107, 0.3)",
-            padding: "14px 16px",
+            background: "#0f172a",
+            border: "1px solid #1e3a5f",
+            padding: "16px 18px",
             borderRadius: "8px",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            minHeight: "104px",
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: "11px", color: "#d6f36b", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            <span style={{ fontSize: "11px", color: "#38bdf8", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 700 }}>
               AI Detection Accuracy
             </span>
             <span
               style={{
-                background: "#d6f36b",
-                color: "#0f172a",
-                fontSize: "10px",
+                background: "rgba(56, 189, 248, 0.15)",
+                color: "#38bdf8",
+                border: "1px solid rgba(56, 189, 248, 0.35)",
+                fontSize: "10.5px",
                 fontWeight: 700,
-                padding: "1px 5px",
+                padding: "2px 6px",
                 borderRadius: "4px",
+                fontFamily: "'DM Mono', monospace",
               }}
             >
               {summary.accuracyPercentage}%
             </span>
           </div>
-          <div style={{ fontSize: "22px", fontWeight: 700, color: "#d6f36b", marginTop: "4px" }}>
+          <div style={{ fontSize: "24px", fontWeight: 800, color: "#f8fafc", marginTop: "6px", letterSpacing: "-0.5px" }}>
             {summary.correctDetections} / {summary.evaluatedCount}
           </div>
-          <span style={{ fontSize: "11px", color: "#94a3b8" }}>Ground Truth Matches</span>
+          <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 500 }}>Ground Truth Matches</span>
         </div>
       </div>
 
@@ -433,23 +449,23 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
           background: "#08101a",
           border: "1px solid #1e293b",
           borderRadius: "10px",
-          padding: "16px 20px",
-          marginBottom: "20px",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+          padding: "20px 22px",
+          marginBottom: "24px",
+          boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "14px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "14px", marginBottom: "16px" }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <span style={{ fontSize: "15px" }}>📡</span>
               <h2 style={{ fontSize: "14px", fontWeight: 700, margin: 0, color: "#f8fafc", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                 Outreach Channel Readiness & Provider State
               </h2>
-              <span style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid rgba(56, 189, 248, 0.3)", padding: "1px 6px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>
+              <span style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid rgba(56, 189, 248, 0.3)", padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 700, fontFamily: "'DM Mono', monospace" }}>
                 REAL DISPATCH ADAPTERS
               </span>
             </div>
-            <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8" }}>
+            <p style={{ margin: "5px 0 0", fontSize: "12px", color: "#94a3b8" }}>
               Recoverly executes real API calls to Resend and Twilio. Review carrier restrictions and open provider configuration below:
             </p>
           </div>
@@ -525,7 +541,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
         </div>
 
         {/* 3 Channels Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px" }}>
           {/* EMAIL */}
           <div
             id="channel-card-email"
@@ -533,10 +549,11 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
               background: "#0b1322",
               border: "1px solid #1e3a5f",
               borderRadius: "8px",
-              padding: "12px 14px",
+              padding: "14px 16px",
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
+              minHeight: "125px",
             }}
           >
             <div>
@@ -552,7 +569,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                 Current Resend testing sender is not configured for arbitrary recipient addresses.
               </p>
             </div>
-            <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "10.5px", color: "#64748b" }}>Provider: Resend</span>
               <a
                 id="link-open-resend-settings"
@@ -585,10 +602,11 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
               background: "#0b1322",
               border: "1px solid #451a03",
               borderRadius: "8px",
-              padding: "12px 14px",
+              padding: "14px 16px",
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
+              minHeight: "125px",
             }}
           >
             <div>
@@ -604,7 +622,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                 Twilio trial delivers to pre-verified Caller IDs only. Unverified numbers return Twilio code 21608.
               </p>
             </div>
-            <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "10.5px", color: "#fb923c" }}>Code 21608 guardrail</span>
               <a
                 id="link-verify-phone-twilio"
@@ -637,10 +655,11 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
               background: "#0b1322",
               border: "1px solid #064e3b",
               borderRadius: "8px",
-              padding: "12px 14px",
+              padding: "14px 16px",
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
+              minHeight: "125px",
             }}
           >
             <div>
@@ -656,7 +675,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                 Join this WhatsApp Sandbox with the test phone number before starting WhatsApp recovery.
               </p>
             </div>
-            <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "10.5px", color: "#4ade80" }}>Sandbox keyword join</span>
               <a
                 id="link-open-whatsapp-sandbox"
@@ -691,10 +710,10 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
           justifyContent: "space-between",
           alignItems: "center",
           flexWrap: "wrap",
-          gap: "12px",
-          marginBottom: "16px",
+          gap: "14px",
+          marginBottom: "20px",
           background: "#0f172a",
-          padding: "10px 14px",
+          padding: "12px 16px",
           borderRadius: "8px",
           border: "1px solid #1e293b",
         }}
@@ -714,24 +733,27 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                 background: filter === tab.key ? "#1e293b" : "transparent",
                 border: filter === tab.key ? "1px solid #334155" : "1px solid transparent",
                 color: filter === tab.key ? "#f8fafc" : "#94a3b8",
-                padding: "5px 10px",
-                borderRadius: "5px",
+                padding: "6px 12px",
+                borderRadius: "6px",
                 fontSize: "12px",
-                fontWeight: filter === tab.key ? 600 : 400,
+                fontWeight: filter === tab.key ? 700 : 500,
                 cursor: "pointer",
-                display: "flex",
+                display: "inline-flex",
                 alignItems: "center",
-                gap: "5px",
+                gap: "6px",
+                transition: "all 0.15s ease",
               }}
             >
               <span>{tab.label}</span>
               <span
                 style={{
                   background: filter === tab.key ? "#334155" : "#1e293b",
-                  padding: "1px 5px",
+                  padding: "1px 6px",
                   borderRadius: "10px",
-                  fontSize: "10px",
-                  color: filter === tab.key ? "#d6f36b" : "#64748b",
+                  fontSize: "10.5px",
+                  fontWeight: 700,
+                  fontFamily: "'DM Mono', monospace",
+                  color: filter === tab.key ? "#d8ee9b" : "#94a3b8",
                 }}
               >
                 {tab.count}
@@ -740,7 +762,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
           ))}
         </div>
 
-        <div style={{ minWidth: "260px" }}>
+        <div style={{ minWidth: "280px", flex: "1 1 280px", maxWidth: "420px" }}>
           <input
             type="text"
             placeholder="Search signals, customers, rails..."
@@ -751,10 +773,11 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
               background: "#020617",
               border: "1px solid #1e293b",
               color: "#f8fafc",
-              padding: "6px 12px",
+              padding: "7px 14px",
               borderRadius: "6px",
-              fontSize: "12px",
+              fontSize: "12.5px",
               outline: "none",
+              boxSizing: "border-box",
             }}
           />
         </div>
@@ -762,9 +785,9 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
 
       {/* Telemetry Queue List / Table */}
       {loading ? (
-        <div style={{ textAlign: "center", padding: "60px", color: "#94a3b8" }}>
-          <div style={{ display: "inline-block", width: "24px", height: "24px", border: "2px solid #334155", borderTopColor: "#d6f36b", borderRadius: "50%", animation: "spin 1s linear infinite", marginBottom: "12px" }}></div>
-          <div>Loading synthetic telemetry queue...</div>
+        <div style={{ textAlign: "center", padding: "60px 20px", color: "#94a3b8", background: "#0f172a", borderRadius: "8px", border: "1px solid #1e293b" }}>
+          <div style={{ display: "inline-block", width: "26px", height: "26px", border: "2px solid #334155", borderTopColor: "#d8ee9b", borderRadius: "50%", animation: "spin 1s linear infinite", marginBottom: "14px" }}></div>
+          <div style={{ fontSize: "13px", fontWeight: 600, color: "#e2e8f0" }}>Loading synthetic telemetry queue...</div>
         </div>
       ) : filteredQueue.length === 0 ? (
         <div
@@ -782,7 +805,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
           <p style={{ fontSize: "12px", marginTop: "4px" }}>Try changing your status filter or clearing the search query.</p>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           {filteredQueue.map((item) => {
             const isAnalyzing = analyzingId === item.id;
             const isWaiting = item.status === "WAITING";
@@ -797,10 +820,10 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                   background: "#0f172a",
                   border: isDetected ? "1px solid #1e3a5f" : "1px solid #1e293b",
                   borderRadius: "8px",
-                  padding: "16px 18px",
+                  padding: "18px 20px",
                   display: "flex",
                   flexDirection: "column",
-                  gap: "12px",
+                  gap: "14px",
                   transition: "border-color 0.2s",
                 }}
               >

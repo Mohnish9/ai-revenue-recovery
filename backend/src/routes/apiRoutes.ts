@@ -67,16 +67,29 @@ import {
 } from "../controllers/telemetryController.js";
 import {
   getDetailedChannelReadinessController,
+  getDemoTestContactController,
+  updateDemoTestContactController,
   startPhoneVerificationController,
   checkPhoneVerificationController,
   connectWhatsAppSandboxController,
   updateContactController,
 } from "../controllers/providerController.js";
+import {
+  getVoiceRecoveryMessageController,
+  dispatchVoiceCallController,
+  exotelCallbackController,
+} from "../controllers/voiceController.js";
 
 export const apiRoutes = Router();
 
 // Public Health & System Probes
 apiRoutes.get("/health", getHealth);
+
+// Public Exotel Dynamic Voice Recovery & Webhook Callback Probes (No Auth Required)
+apiRoutes.get("/voice/recovery-message", getVoiceRecoveryMessageController);
+apiRoutes.head("/voice/recovery-message", getVoiceRecoveryMessageController);
+apiRoutes.post("/voice/exotel-callback", exotelCallbackController);
+apiRoutes.get("/voice/exotel-callback", exotelCallbackController);
 
 // Public Customer Self-Service Payment & Incident Resolution Endpoints (No Auth Required)
 apiRoutes.get("/sandbox/incidents/:id/public", getPublicSandboxIncidentController);
@@ -144,10 +157,18 @@ apiRoutes.post("/ai/chat", chatAIController);
 
 // Provider Channel Readiness & Verification Workflows
 apiRoutes.get("/provider/readiness", getDetailedChannelReadinessController);
+apiRoutes.get("/provider/demo-test-contact", getDemoTestContactController);
+apiRoutes.post("/provider/demo-test-contact", updateDemoTestContactController);
+apiRoutes.patch("/provider/demo-test-contact", updateDemoTestContactController);
 apiRoutes.post("/provider/twilio/verify/start", startPhoneVerificationController);
 apiRoutes.post("/provider/twilio/verify/check", checkPhoneVerificationController);
 apiRoutes.post("/provider/twilio/whatsapp/join", connectWhatsAppSandboxController);
 apiRoutes.post("/provider/twilio/whatsapp/connect", connectWhatsAppSandboxController);
+
+// Voice Recovery Operations (Exotel Outbound Dispatch)
+apiRoutes.post("/voice/recovery-call", dispatchVoiceCallController);
+apiRoutes.post("/voice/dispatch-call", dispatchVoiceCallController);
+apiRoutes.post("/voice/call", dispatchVoiceCallController);
 
 // Dynamic Sandbox Incidents REST API
 apiRoutes.get("/sandbox/incidents", listSandboxIncidentsController);
@@ -170,7 +191,10 @@ apiRoutes.delete("/sandbox/incidents/:id", deleteSandboxIncidentController);
 
 // Synthetic Telemetry Demonstration Queue (Raw Signals -> Gemini Detection -> Sandbox Incident)
 apiRoutes.get("/telemetry/demo-queue", getTelemetryQueueController);
+apiRoutes.get("/demo-queue", getTelemetryQueueController);
+apiRoutes.get("/telemetry/queue", getTelemetryQueueController);
 apiRoutes.get("/telemetry/channel-readiness", getChannelReadinessController);
+apiRoutes.get("/channel-readiness", getChannelReadinessController);
 apiRoutes.get("/telemetry/:id", getTelemetryRecordController);
 apiRoutes.patch("/telemetry/:id/contact", updateTelemetryContactController);
 apiRoutes.put("/telemetry/:id/contact", updateTelemetryContactController);

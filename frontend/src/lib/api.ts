@@ -700,5 +700,27 @@ export async function fetchChannelReadinessApi(): Promise<{ success: boolean; da
   return fetchJson<{ success: boolean; data: ChannelReadinessResponse }>("/telemetry/channel-readiness");
 }
 
+export interface DemoTestContactConfig {
+  enabled: boolean;
+  testEmail: string;
+  testPhone: string;
+  autoFormatPhone: boolean;
+  notes?: string;
+  updatedAt: string;
+}
+
+export async function fetchDemoTestContactApi(): Promise<{ success: boolean; data: DemoTestContactConfig }> {
+  return fetchJson<{ success: boolean; data: DemoTestContactConfig }>("/provider/demo-test-contact");
+}
+
+export async function updateDemoTestContactApi(
+  config: Partial<DemoTestContactConfig>
+): Promise<{ success: boolean; message: string; data: DemoTestContactConfig }> {
+  return fetchJson<{ success: boolean; message: string; data: DemoTestContactConfig }>("/provider/demo-test-contact", {
+    method: "POST",
+    body: JSON.stringify(config),
+  });
+}
+
 
 
