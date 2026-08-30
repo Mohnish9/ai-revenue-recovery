@@ -372,7 +372,7 @@ export interface ExotelCallResult {
  */
 export async function dispatchExotelVoiceCall(
   incidentId: string,
-  options?: { targetPhoneOverride?: string }
+  options?: { targetPhoneOverride?: string; skipActionPush?: boolean }
 ): Promise<ExotelCallResult> {
   const now = new Date().toISOString();
   const exotelApiKey = process.env.EXOTEL_API_KEY?.trim();
@@ -538,7 +538,7 @@ export async function dispatchExotelVoiceCall(
 
       // Record action on sandbox incident if active
       const sbItem = persistentSandboxIncidents.get(incident.id);
-      if (sbItem) {
+      if (sbItem && !options?.skipActionPush) {
         sbItem.actions = sbItem.actions || [];
         sbItem.actions.push({
           id: `act_${Date.now()}`,

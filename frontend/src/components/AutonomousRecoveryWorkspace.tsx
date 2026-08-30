@@ -26,7 +26,7 @@ export function AutonomousRecoveryWorkspace({
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"DECISION_TRACE" | "OUTREACH" | "PROVIDER_DEBUG" | "TIMELINE" | "AI_REASONING" | "CONTEXT">("DECISION_TRACE");
-  const [selectedChannel, setSelectedChannel] = useState<"WHATSAPP" | "SMS" | "EMAIL">("WHATSAPP");
+  const [selectedChannel, setSelectedChannel] = useState<"EMAIL" | "VOICE">("EMAIL");
   const [copiedLink, setCopiedLink] = useState(false);
   const [testContactModalOpen, setTestContactModalOpen] = useState(false);
   const [testContactConfig, setTestContactConfig] = useState<DemoTestContactConfig | null>(null);
@@ -57,9 +57,8 @@ export function AutonomousRecoveryWorkspace({
   useEffect(() => {
     if (latestAction?.selectedChannel) {
       const ch = String(latestAction.selectedChannel).toUpperCase();
-      if (ch.includes("EMAIL")) setSelectedChannel("EMAIL");
-      else if (ch.includes("SMS")) setSelectedChannel("SMS");
-      else if (ch.includes("WHATSAPP")) setSelectedChannel("WHATSAPP");
+      if (ch.includes("VOICE")) setSelectedChannel("VOICE");
+      else if (ch.includes("EMAIL")) setSelectedChannel("EMAIL");
     }
   }, [latestAction?.selectedChannel]);
 
@@ -181,8 +180,7 @@ export function AutonomousRecoveryWorkspace({
   };
 
   // Get channel dispatches from latest action
-  const whatsappDispatch = latestChannelDispatches.find((c) => c.channel === "WHATSAPP");
-  const smsDispatch = latestChannelDispatches.find((c) => c.channel === "SMS");
+  const voiceDispatch = latestChannelDispatches.find((c) => c.channel === "VOICE");
   const emailDispatch = latestChannelDispatches.find((c) => c.channel === "EMAIL");
 
   const customerName = incident.customer.name;
@@ -532,21 +530,27 @@ export function AutonomousRecoveryWorkspace({
           {[
             {
               stepNum: 1,
-              title: "Attempt 1: Initial Dispatch",
+              title: "Attempt 1: EMAIL",
+              channel: "EMAIL",
+              provider: "Resend",
               timing: "T+2 min",
-              desc: "1-Click WhatsApp & SMS Outreach with deep link",
+              desc: "Personalized billing recovery email via Resend with dynamic 1-click resolution link",
             },
             {
               stepNum: 2,
-              title: "Attempt 2: Omnichannel Fallback",
+              title: "Attempt 2: VOICE",
+              channel: "VOICE",
+              provider: "Exotel",
               timing: "T+5 min later",
-              desc: "UPI Re-auth or dynamic discount incentive",
+              desc: "Outbound AI voice recovery call via Exotel with conversational audio guidance",
             },
             {
               stepNum: 3,
-              title: "Attempt 3: Final Cascade & Handoff",
+              title: "Attempt 3: EMAIL",
+              channel: "EMAIL",
+              provider: "Resend",
               timing: "T+5 min later",
-              desc: "Executive intervention or human escalation dossier",
+              desc: "Fresh follow-up email incorporating past attempt state prior to VIP human escalation",
             },
           ].map((step) => {
             const hasExecuted = (incident.actions || []).some((a) => a.attemptNumber === step.stepNum);
@@ -579,7 +583,7 @@ export function AutonomousRecoveryWorkspace({
                       color: hasExecuted ? "#166534" : isNext ? "#0369a1" : "#64748b",
                     }}
                   >
-                    STAGE {step.stepNum} • {step.timing}
+                    STAGE {step.stepNum} • {step.channel} • {step.timing}
                   </span>
                   <span
                     className={`status-pill ${hasExecuted ? "success" : isNext ? "info" : isEscalated ? "danger" : ""}`}
@@ -588,7 +592,7 @@ export function AutonomousRecoveryWorkspace({
                     {hasExecuted ? "✓ Executed" : isNext ? "⏳ Scheduled" : isEscalated ? "🛑 Escalated" : "Pending"}
                   </span>
                 </div>
-                <div style={{ fontSize: "12.5px", fontWeight: 700, color: "#1e293b" }}>{step.title}</div>
+                <div style={{ fontSize: "12.5px", fontWeight: 700, color: "#1e293b" }}>{step.title} ({step.provider})</div>
                 <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px", lineHeight: "1.3" }}>
                   {step.desc}
                 </div>
@@ -652,12 +656,12 @@ export function AutonomousRecoveryWorkspace({
                   Live Autonomous Decision & Reasoning Trace
                 </h3>
                 <p style={{ fontSize: "12px", color: "#64748b", margin: "3px 0 0" }}>
-                  Real-time log of Gemini's dynamic channel selection, strategy reassessment, generated messages, and provider execution outcomes per attempt.
+                  Deterministic sequence (EMAIL → VOICE → EMAIL) with Gemini generating personalized messaging, reasoning, and provider execution outcomes per attempt.
                 </p>
               </div>
               <div style={{ display: "flex", gap: "8px" }}>
                 <span className="status-pill purple" style={{ fontSize: "10.5px" }}>
-                  AI Dynamically Selecting Channels
+                  EMAIL → VOICE → EMAIL
                 </span>
                 <span className="status-pill info" style={{ fontSize: "10.5px" }}>
                   3 Bounded Attempts
@@ -670,10 +674,10 @@ export function AutonomousRecoveryWorkspace({
             <div style={{ padding: "40px 24px", textAlign: "center", background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
               <div style={{ fontSize: "32px", marginBottom: "8px" }}>⏳</div>
               <h4 style={{ fontSize: "15px", fontWeight: 800, color: "#0f172a", margin: "0 0 6px" }}>
-                Attempt #1 Scheduled • Awaiting Execution
+                Attempt #1 (EMAIL) Scheduled • Awaiting Execution
               </h4>
               <p style={{ fontSize: "13px", color: "#64748b", maxWidth: "560px", margin: "0 auto 16px" }}>
-                Gemini will dynamically analyze the failure root cause, select the optimal communication channel (Email, WhatsApp, or SMS), and generate personalized recovery copy.
+                Gemini will generate personalized billing recovery email copy for Attempt #1 via Resend, referencing the failure root cause and customer context.
               </p>
               {status !== "RECOVERED" && status !== "ESCALATED_TO_HUMAN" && (
                 <button
@@ -682,7 +686,7 @@ export function AutonomousRecoveryWorkspace({
                   className="btn btn-primary"
                   style={{ background: "#38bdf8", color: "#0f172a", fontWeight: 800, fontSize: "12.5px" }}
                 >
-                  ⚡ Trigger Attempt #1 Now
+                  ⚡ Trigger Attempt #1 (EMAIL) Now
                 </button>
               )}
             </div>
@@ -690,17 +694,17 @@ export function AutonomousRecoveryWorkspace({
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               {allActions.map((act: any, actIdx: number) => {
                 const primaryDispatch: OutboundDeliveryResult | undefined = (act.channelDispatches || [])[0];
-                const channel = (act.selectedChannel || act.aiChannel || primaryDispatch?.channel || "SMS").toUpperCase();
+                const channel = (act.selectedChannel || act.aiChannel || primaryDispatch?.channel || ((act.attemptNumber === 2) ? "VOICE" : "EMAIL")).toUpperCase();
                 const deliveryMode = primaryDispatch?.deliveryMode || act.deliveryMode || (primaryDispatch?.status === "SENT" ? "REAL" : primaryDispatch?.status === "SIMULATED" ? "SIMULATED" : primaryDispatch?.status === "FAILED" ? "FAILED" : "SIMULATED");
                 const isRealSent = deliveryMode === "REAL" && (act.providerStatus === "SENT" || primaryDispatch?.status === "SENT");
                 const isSimulated = deliveryMode === "SIMULATED" || act.status === "SIMULATED" || primaryDispatch?.status === "SIMULATED";
                 const isFailed = deliveryMode === "FAILED" || act.status === "CHANNEL_EXECUTION_FAILED" || primaryDispatch?.status === "FAILED";
-                const provider = act.provider || (channel === "EMAIL" ? "Resend" : "Twilio");
+                const provider = act.provider || (channel === "EMAIL" ? "Resend" : "Exotel");
                 const providerId = act.providerMessageId || primaryDispatch?.providerMessageId;
 
-                const channelIcon = channel === "EMAIL" ? "✉️" : channel === "WHATSAPP" ? "💬" : "📱";
-                const channelColor = channel === "EMAIL" ? "#7c3aed" : channel === "WHATSAPP" ? "#16a34a" : "#2563eb";
-                const channelBg = channel === "EMAIL" ? "#f5f3ff" : channel === "WHATSAPP" ? "#f0fdf4" : "#eff6ff";
+                const channelIcon = channel === "EMAIL" ? "✉️" : "📞";
+                const channelColor = channel === "EMAIL" ? "#7c3aed" : "#2563eb";
+                const channelBg = channel === "EMAIL" ? "#f5f3ff" : "#eff6ff";
 
                 return (
                   <div
@@ -761,7 +765,7 @@ export function AutonomousRecoveryWorkspace({
                           }}
                         >
                           <span>{channelIcon}</span>
-                          <span>AI Selected: {channel}</span>
+                          <span>Channel: {channel} ({provider})</span>
                         </span>
                         <span style={{ fontSize: "11px", color: "#94a3b8" }}>
                           {act.executedAt ? new Date(act.executedAt).toLocaleTimeString() : "Executed"}
@@ -932,54 +936,6 @@ export function AutonomousRecoveryWorkspace({
           {/* Channel Selector Pills */}
           <div style={{ display: "flex", gap: "10px" }}>
             <button
-              onClick={() => setSelectedChannel("WHATSAPP")}
-              style={{
-                flex: 1,
-                padding: "12px 16px",
-                borderRadius: "10px",
-                border: selectedChannel === "WHATSAPP" ? "2px solid #22c55e" : "1px solid #e2e8f0",
-                background: selectedChannel === "WHATSAPP" ? "#f0fdf4" : "#ffffff",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                cursor: "pointer",
-                textAlign: "left",
-              }}
-            >
-              <span style={{ fontSize: "22px" }}>💬</span>
-              <div>
-                <div style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>WhatsApp Outreach</div>
-                <div style={{ fontSize: "11px", color: whatsappDispatch?.status === "SENT" ? "#16a34a" : whatsappDispatch?.status === "FAILED" ? "#dc2626" : "#64748b", fontWeight: 600 }}>
-                  {whatsappDispatch?.deliveryLabel || "1-Click UPI & Resolution Link"}
-                </div>
-              </div>
-            </button>
-
-            <button
-              onClick={() => setSelectedChannel("SMS")}
-              style={{
-                flex: 1,
-                padding: "12px 16px",
-                borderRadius: "10px",
-                border: selectedChannel === "SMS" ? "2px solid #3b82f6" : "1px solid #e2e8f0",
-                background: selectedChannel === "SMS" ? "#eff6ff" : "#ffffff",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                cursor: "pointer",
-                textAlign: "left",
-              }}
-            >
-              <span style={{ fontSize: "22px" }}>📱</span>
-              <div>
-                <div style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>SMS Notification</div>
-                <div style={{ fontSize: "11px", color: smsDispatch?.status === "SENT" ? "#2563eb" : smsDispatch?.status === "FAILED" ? "#dc2626" : "#64748b", fontWeight: 600 }}>
-                  {smsDispatch?.deliveryLabel || "Direct Short-link Dunning"}
-                </div>
-              </div>
-            </button>
-
-            <button
               onClick={() => setSelectedChannel("EMAIL")}
               style={{
                 flex: 1,
@@ -996,133 +952,39 @@ export function AutonomousRecoveryWorkspace({
             >
               <span style={{ fontSize: "22px" }}>✉️</span>
               <div>
-                <div style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>Email Notification</div>
+                <div style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>Email Outreach (Resend)</div>
                 <div style={{ fontSize: "11px", color: emailDispatch?.status === "SENT" ? "#7c3aed" : emailDispatch?.status === "FAILED" ? "#dc2626" : "#64748b", fontWeight: 600 }}>
-                  {emailDispatch?.deliveryLabel || "Formal Billing Invoice Review"}
+                  {emailDispatch?.deliveryLabel || "Direct Invoice & Settlement Link"}
+                </div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setSelectedChannel("VOICE")}
+              style={{
+                flex: 1,
+                padding: "12px 16px",
+                borderRadius: "10px",
+                border: selectedChannel === "VOICE" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                background: selectedChannel === "VOICE" ? "#eff6ff" : "#ffffff",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: "22px" }}>📞</span>
+              <div>
+                <div style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>Voice Call (Exotel)</div>
+                <div style={{ fontSize: "11px", color: voiceDispatch?.status === "SENT" ? "#2563eb" : voiceDispatch?.status === "FAILED" ? "#dc2626" : "#64748b", fontWeight: 600 }}>
+                  {voiceDispatch?.deliveryLabel || "Automated AI Voice Call with Audio Prompt"}
                 </div>
               </div>
             </button>
           </div>
 
           {/* Detailed Message Preview for Selected Channel */}
-          {selectedChannel === "WHATSAPP" && (
-            <div style={{ background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-                <div>
-                  <h4 style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
-                    WhatsApp Message Preview • To: {customerPhone}
-                  </h4>
-                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
-                    Recipient: {customerName} | Status:{" "}
-                    <strong style={{ color: whatsappDispatch?.status === "SENT" ? "#16a34a" : whatsappDispatch?.status === "FAILED" ? "#dc2626" : "#475569" }}>
-                      {whatsappDispatch?.deliveryLabel || "Pending Dispatch"}
-                    </strong>
-                  </div>
-                </div>
-                {whatsappDispatch?.providerMessageId && (
-                  <span style={{ fontSize: "10.5px", fontFamily: "monospace", color: "#64748b" }}>
-                    Twilio SID: {whatsappDispatch.providerMessageId}
-                  </span>
-                )}
-              </div>
-
-              <div
-                style={{
-                  background: "#eef2f6",
-                  backgroundImage: "radial-gradient(#cbd5e1 1px, transparent 1px)",
-                  backgroundSize: "16px 16px",
-                  borderRadius: "10px",
-                  padding: "18px",
-                  display: "flex",
-                  justifyContent: "flex-start",
-                }}
-              >
-                <div
-                  style={{
-                    background: "#ffffff",
-                    borderRadius: "10px 10px 10px 0",
-                    padding: "14px 18px",
-                    maxWidth: "540px",
-                    boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-                    border: "1px solid #e2e8f0",
-                  }}
-                >
-                  <div style={{ fontSize: "12px", fontWeight: 700, color: "#15803d", marginBottom: "6px" }}>
-                    Recoverly Verified Business
-                  </div>
-                  <div style={{ fontSize: "13px", color: "#1e293b", lineHeight: "1.5", whiteSpace: "pre-wrap" }}>
-                    {whatsappDispatch?.messagePreview ||
-                      analysis?.customerMessage?.whatsapp ||
-                      `Hi ${customerName}, we noticed a temporary issue with your payment of ${incident.incident.currency} ${incident.incident.amount.toLocaleString()} (${incident.incident.failureCode}). Tap below to complete securely in 1 click.\n\n${resolveUrl}`}
-                  </div>
-                  <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #f1f5f9" }}>
-                    <a
-                      href={resolveUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        background: "#25d366",
-                        color: "#ffffff",
-                        padding: "8px 16px",
-                        borderRadius: "6px",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        textDecoration: "none",
-                      }}
-                    >
-                      <span>⚡</span>
-                      <span>1-Click UPI Payment Link</span>
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {selectedChannel === "SMS" && (
-            <div style={{ background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-                <div>
-                  <h4 style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
-                    SMS Message Preview • To: {customerPhone}
-                  </h4>
-                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
-                    Recipient: {customerName} | Status:{" "}
-                    <strong style={{ color: smsDispatch?.status === "SENT" ? "#2563eb" : smsDispatch?.status === "FAILED" ? "#dc2626" : "#475569" }}>
-                      {smsDispatch?.deliveryLabel || "Pending Dispatch"}
-                    </strong>
-                  </div>
-                </div>
-                {smsDispatch?.providerMessageId && (
-                  <span style={{ fontSize: "10.5px", fontFamily: "monospace", color: "#64748b" }}>
-                    Twilio SID: {smsDispatch.providerMessageId}
-                  </span>
-                )}
-              </div>
-
-              <div
-                style={{
-                  background: "#f1f5f9",
-                  borderRadius: "10px",
-                  padding: "16px 20px",
-                  maxWidth: "500px",
-                  border: "1px solid #cbd5e1",
-                  fontSize: "13px",
-                  color: "#0f172a",
-                  lineHeight: "1.5",
-                  fontFamily: "sans-serif",
-                }}
-              >
-                {smsDispatch?.messagePreview ||
-                  analysis?.customerMessage?.sms ||
-                  `Recoverly: Resolve your ${incident.incident.currency} ${incident.incident.amount.toLocaleString()} payment securely: ${resolveUrl}`}
-              </div>
-            </div>
-          )}
-
           {selectedChannel === "EMAIL" && (
             <div style={{ background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
@@ -1156,6 +1018,52 @@ export function AutonomousRecoveryWorkspace({
               >
                 {analysis?.customerMessage?.email?.body ||
                   `Dear ${customerName},\n\nWe encountered a temporary processing issue for your payment of ${incident.incident.currency} ${incident.incident.amount.toLocaleString()}.\n\nPlease review and resolve via the secure link:\n${resolveUrl}\n\nBest regards,\nRecoverly Operations Team`}
+              </div>
+            </div>
+          )}
+
+          {selectedChannel === "VOICE" && (
+            <div style={{ background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                <div>
+                  <h4 style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
+                    Automated Voice Call Script • To: {customerPhone}
+                  </h4>
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                    Recipient: {customerName} | Provider: Exotel Voice Gateway | Status:{" "}
+                    <strong style={{ color: voiceDispatch?.status === "SENT" ? "#2563eb" : voiceDispatch?.status === "FAILED" ? "#dc2626" : "#475569" }}>
+                      {voiceDispatch?.deliveryLabel || "Pending Call Dispatch"}
+                    </strong>
+                  </div>
+                </div>
+                {voiceDispatch?.providerMessageId && (
+                  <span style={{ fontSize: "10.5px", fontFamily: "monospace", color: "#64748b" }}>
+                    Call SID: {voiceDispatch.providerMessageId}
+                  </span>
+                )}
+              </div>
+
+              <div
+                style={{
+                  background: "#f8fafc",
+                  borderRadius: "10px",
+                  padding: "16px 20px",
+                  border: "1px solid #cbd5e1",
+                  fontSize: "13px",
+                  color: "#0f172a",
+                  lineHeight: "1.6",
+                  fontFamily: "sans-serif",
+                }}
+              >
+                <div style={{ fontSize: "11px", fontWeight: 800, color: "#0369a1", textTransform: "uppercase", marginBottom: "6px" }}>
+                  🎙️ AI Voice Spoken Text (Generated Script ~25s)
+                </div>
+                <div style={{ whiteSpace: "pre-wrap", color: "#1e293b" }}>
+                  {voiceDispatch?.messagePreview ||
+                    voiceDispatch?.content?.body ||
+                    (analysis?.customerMessage as any)?.voice ||
+                    `Hello ${customerName}, this is an automated priority payment notification from Recoverly. Your recent payment of ${incident.incident.currency} ${incident.incident.amount.toLocaleString()} could not be processed due to ${incident.incident.failureCode}. A direct resolution link has been delivered to your email. Thank you.`}
+                </div>
               </div>
             </div>
           )}
@@ -1240,7 +1148,7 @@ export function AutonomousRecoveryWorkspace({
                             AI Decision & Strategy
                           </div>
                           <div style={{ fontSize: "12px", color: "#1e293b", marginBottom: "6px" }}>
-                            <strong>Strategy:</strong> {act.aiStrategy || act.actionType} • <strong>Channel:</strong> {act.selectedChannel || act.aiChannel || "SMS"}
+                            <strong>Strategy:</strong> {act.aiStrategy || act.actionType} • <strong>Channel:</strong> {act.selectedChannel || act.aiChannel || "EMAIL"}
                           </div>
                           <div style={{ fontSize: "11.5px", color: "#64748b", lineHeight: "1.4" }}>
                             {act.reason || "Autonomous recovery touchpoint formulated based on incident state."}
@@ -1249,7 +1157,7 @@ export function AutonomousRecoveryWorkspace({
 
                         <div style={{ background: "#f1f5f9", padding: "12px 14px", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
                           <div style={{ fontSize: "11px", fontWeight: 800, color: "#475569", textTransform: "uppercase", marginBottom: "4px" }}>
-                            Dispatched Message Copy ({act.selectedChannel || act.aiChannel || "SMS"})
+                            Dispatched Message Copy ({act.selectedChannel || act.aiChannel || "EMAIL"})
                           </div>
                           <div style={{ fontSize: "11.5px", color: "#0f172a", whiteSpace: "pre-wrap", maxHeight: "110px", overflowY: "auto", fontFamily: "monospace" }}>
                             {act.generatedMessageText || act.details || "No message content recorded"}
@@ -1278,10 +1186,10 @@ export function AutonomousRecoveryWorkspace({
                             return (
                               <tr key={cdIdx} style={{ borderBottom: "1px solid #f1f5f9" }}>
                                 <td style={{ padding: "10px", fontWeight: 700 }}>
-                                  {cd.channel === "WHATSAPP" ? "💬 WhatsApp" : cd.channel === "SMS" ? "📱 SMS" : "✉️ Email"}
+                                  {cd.channel === "VOICE" ? "📞 Voice Call" : "✉️ Email"}
                                 </td>
                                 <td style={{ padding: "10px", color: "#334155" }}>
-                                  {cd.channel === "EMAIL" ? "Resend API" : cd.channel === "WHATSAPP" ? "Twilio WhatsApp" : "Twilio SMS"}
+                                  {cd.channel === "VOICE" ? "Exotel Voice Gateway" : "Resend API"}
                                 </td>
                                 <td style={{ padding: "10px", fontFamily: "monospace", color: "#475569" }}>
                                   <div style={{ fontWeight: 700, color: "#0f172a" }}>
@@ -1315,7 +1223,7 @@ export function AutonomousRecoveryWorkspace({
                                   )}
                                   {cd.providerErrorCode && (
                                     <div style={{ color: "#dc2626", fontSize: "11px", marginTop: "2px" }}>
-                                      Twilio Code: <strong>{cd.providerErrorCode}</strong>
+                                      Code: <strong>{cd.providerErrorCode}</strong>
                                     </div>
                                   )}
                                   {(cd.providerErrorMessage || cd.error) && (

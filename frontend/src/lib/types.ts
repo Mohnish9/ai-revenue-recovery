@@ -482,8 +482,8 @@ export interface StructuredAIAnalysis {
 }
 
 export interface OutboundDeliveryResult {
-  channel: "WHATSAPP" | "SMS" | "EMAIL";
-  provider: "TWILIO" | "RESEND" | "SIMULATION_ENGINE" | string;
+  channel: "EMAIL" | "VOICE" | "WHATSAPP" | "SMS" | string;
+  provider: "RESEND" | "EXOTEL" | "TWILIO" | "SIMULATION_ENGINE" | string;
   status: "DELIVERED" | "SENT" | "SIMULATED" | "FAILED";
   deliveryMode?: "REAL" | "SIMULATED" | "FAILED";
   deliveryLabel: string;

@@ -19,7 +19,7 @@ export function DemoTestContactModal({
     testPhone: "",
     testEmail: "",
     autoFormatPhone: true,
-    notes: "Verified demo contact for live Twilio & Resend test dispatches",
+    notes: "Verified demo contact for live Exotel Voice & Resend Email test dispatches",
     updatedAt: new Date().toISOString(),
   });
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -120,7 +120,7 @@ export function DemoTestContactModal({
                 Demo Test Contact Router
               </h3>
               <p style={{ margin: 0, fontSize: "12px", color: "#94a3b8" }}>
-                Real Twilio & Resend outbound testing for synthetic customer scenarios
+                Real Exotel & Resend outbound testing for synthetic customer scenarios
               </p>
             </div>
           </div>
@@ -154,7 +154,7 @@ export function DemoTestContactModal({
               lineHeight: "1.5",
             }}
           >
-            <strong>How this works:</strong> Synthetic customer telemetry and risk decisions remain completely preserved. When enabled, actual outbound calls to Twilio (SMS/WhatsApp) and Resend (Email) are routed to your verified numbers/emails below so you receive real test messages on your devices.
+            <strong>How this works:</strong> Synthetic customer telemetry and risk decisions remain completely preserved. When enabled, actual outbound dispatches via Exotel (Voice Calls) and Resend (Email) are routed to your verified numbers/emails below so you receive real test calls and emails on your devices.
           </div>
 
           {loading ? (
@@ -226,7 +226,7 @@ export function DemoTestContactModal({
               <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                 <div>
                   <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
-                    Verified Test Phone Number (Twilio SMS / WhatsApp)
+                    Verified Test Phone Number (Exotel Voice Calls)
                   </label>
                   <input
                     type="text"
@@ -243,7 +243,7 @@ export function DemoTestContactModal({
                     }}
                   />
                   <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
-                    Must be registered in your Twilio Sandbox (for WhatsApp: send 'join &lt;code&gt;' from this phone) or verified caller IDs.
+                    Destination phone number for real Exotel automated voice recovery phone calls.
                   </div>
                 </div>
 

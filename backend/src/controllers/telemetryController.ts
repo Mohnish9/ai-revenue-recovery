@@ -133,7 +133,7 @@ export async function getChannelReadinessController(req: Request, res: Response)
 
     const detailed = getDetailedChannelReadiness(email, phone, name);
 
-    // Provide dual compatibility: detailed + legacy nested structure
+    // Provide clean structure matching detailed readiness (Email & Voice)
     res.json({
       success: true,
       data: {
@@ -148,34 +148,18 @@ export async function getChannelReadinessController(req: Request, res: Response)
           isResendTestingDomain: detailed.email.isResendTestingDomain,
           isDeliverableToRecipient: detailed.email.isDeliverableToRecipient,
         },
-        twilioSms: {
-          configured: detailed.phone.twilio_sms_status !== "UNCONFIGURED",
-          accountSidPresent: Boolean(process.env.TWILIO_ACCOUNT_SID),
-          fromNumber: process.env.TWILIO_PHONE_NUMBER || "+14155238886",
-          mode: "TRIAL",
-          status: detailed.phone.twilio_sms_status,
-          phone_verification_status: detailed.phone.phone_verification_status,
-          deliveryLabel: detailed.phone.smsLabel,
-          details: detailed.phone.details,
-          errorCodeDoc: "Code 21608: The number is unverified. Trial accounts cannot send messages to unverified numbers.",
-          actionLabel: detailed.phone.actionLabel,
-        },
-        twilioWhatsApp: {
-          configured: detailed.whatsapp.whatsapp_sandbox_status !== "UNCONFIGURED",
-          accountSidPresent: Boolean(process.env.TWILIO_ACCOUNT_SID),
-          fromNumber: detailed.whatsapp.sandboxNumber,
-          sandboxNumber: detailed.whatsapp.sandboxNumber,
-          status: detailed.whatsapp.whatsapp_sandbox_status,
-          whatsapp_sandbox_status: detailed.whatsapp.whatsapp_sandbox_status,
-          deliveryLabel: detailed.whatsapp.details,
-          details: detailed.whatsapp.details,
-          joinKeyword: detailed.whatsapp.joinKeyword,
-          deepLink: detailed.whatsapp.deepLink,
-          actionLabel: detailed.whatsapp.actionLabel,
+        exotel: {
+          configured: detailed.voice.status !== "UNCONFIGURED",
+          sidPresent: Boolean(process.env.EXOTEL_SID),
+          exoPhone: detailed.voice.exoPhone,
+          status: detailed.voice.status,
+          deliveryLabel: detailed.voice.deliveryLabel,
+          details: detailed.voice.details,
+          actionLabel: detailed.voice.actionLabel,
         },
         defaultTestContact: {
           email: email || detailed.recipientEmail || "customer@example.test",
-          phone: phone || detailed.recipientPhone || "+14155238886",
+          phone: phone || detailed.recipientPhone || "+919417675967",
           hasCustomContact: Boolean(email || phone),
         },
       },

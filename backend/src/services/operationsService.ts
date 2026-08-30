@@ -920,7 +920,7 @@ export interface ScenarioTypeConfig {
   description: string;
   defaultPaymentMethod: string;
   defaultFailureCode: string;
-  defaultChannel: "WHATSAPP" | "SMS" | "EMAIL";
+  defaultChannel: "EMAIL" | "VOICE";
   sampleBillingContext: string;
   suggestedAmount: number;
 }
@@ -935,7 +935,7 @@ export const RECOVERY_SCENARIO_TYPES: ScenarioTypeConfig[] = [
     description: "Automated recurring batch charge rejected due to balance limit or card velocity limit. High customer intent.",
     defaultPaymentMethod: "HDFC Visa Credit Card (•••• 4829)",
     defaultFailureCode: "ERR_INSUFFICIENT_FUNDS_51",
-    defaultChannel: "WHATSAPP",
+    defaultChannel: "EMAIL",
     sampleBillingContext: "Primary credit card debited for monthly SaaS tier rejected with ERR_INSUFFICIENT_FUNDS during 04:00 AM automated batch debit. Customer has high historical LTV and active product engagement.",
     suggestedAmount: 7800,
   },
@@ -961,7 +961,7 @@ export const RECOVERY_SCENARIO_TYPES: ScenarioTypeConfig[] = [
     description: "Issuing bank OTP SMS delivery delayed by telecom gateway or biometric verification dropped at checkout.",
     defaultPaymentMethod: "Axis Bank Rupay Debit (•••• 7731)",
     defaultFailureCode: "3DS_CHALLENGE_TIMEOUT_EXPIRED",
-    defaultChannel: "WHATSAPP",
+    defaultChannel: "EMAIL",
     sampleBillingContext: "Customer attempted checkout but issuing bank 3DS OTP verification timed out after 180s without OTP submission. Cart remains cached and user intent is high.",
     suggestedAmount: 3499,
   },
@@ -974,7 +974,7 @@ export const RECOVERY_SCENARIO_TYPES: ScenarioTypeConfig[] = [
     description: "Acquirer network degradation during peak banking clearing window; customer account balance untouched.",
     defaultPaymentMethod: "State Bank of India (Corporate Netbanking)",
     defaultFailureCode: "GATEWAY_TIMEOUT_504_ACQUIRER_UNAVAILABLE",
-    defaultChannel: "SMS",
+    defaultChannel: "EMAIL",
     sampleBillingContext: "Netbanking checkout timed out due to SBI core banking gateway downtime during peak evening clearing window. Balance untouched; requires smart acquirer routing.",
     suggestedAmount: 14200,
   },
@@ -987,7 +987,7 @@ export const RECOVERY_SCENARIO_TYPES: ScenarioTypeConfig[] = [
     description: "High-intent visitor dropped at payment step after configuring cart or plan.",
     defaultPaymentMethod: "Checkout Funnel Step 3 (Payment Selection)",
     defaultFailureCode: "CART_ABANDONED_STEP_3",
-    defaultChannel: "WHATSAPP",
+    defaultChannel: "EMAIL",
     sampleBillingContext: "High-intent visitor configured Annual Business Plan, applied discount coupon, but dropped out at payment review step after 35-minute active session duration.",
     suggestedAmount: 4500,
   },
@@ -1013,7 +1013,7 @@ export const RECOVERY_SCENARIO_TYPES: ScenarioTypeConfig[] = [
     description: "Recurring UPI AutoPay mandate execution declined by NPCI handle due to daily volume limit exhaustion.",
     defaultPaymentMethod: "UPI AutoPay (NPCI Mandate UMN-94821)",
     defaultFailureCode: "VPA_MANDATE_EXECUTION_FAILED_LIMIT",
-    defaultChannel: "WHATSAPP",
+    defaultChannel: "EMAIL",
     sampleBillingContext: "Recurring UPI AutoPay mandate execution declined by NPCI handle due to daily PSP volume limit exhaustion. Instant 1-click UPI Intent link recommended.",
     suggestedAmount: 9999,
   },
@@ -1039,8 +1039,8 @@ export const RECOVERY_SCENARIO_TYPES: ScenarioTypeConfig[] = [
     description: "Multi-signal AI churn alert: failed payment combined with drop in product engagement.",
     defaultPaymentMethod: "Annual Starter Plan (Auto-Renewing)",
     defaultFailureCode: "AI_CHURN_PREDICTION_SCORE_89",
-    defaultChannel: "WHATSAPP",
-    sampleBillingContext: "Multi-signal AI churn alert: 2 failed payment retries, zero login activity for 18 days, and open pricing inquiry. Aggressive dunning will cause permanent cancellation.",
+    defaultChannel: "VOICE",
+    sampleBillingContext: "Multi-signal AI churn alert: 2 failed payment retries, zero login activity for 18 days, and open pricing inquiry. High-touch voice outreach recommended.",
     suggestedAmount: 5999,
   },
 ];
@@ -1884,7 +1884,7 @@ export async function executeAutonomousLoopStep(
           ? "Initiate direct AP procurement phone outreach, verify purchase order authorization, and propose formal payment restructuring."
           : item.category === "CHURN"
           ? "Schedule high-touch retention call with Account Executive and offer tailored 15% annual commitment discount."
-          : "Dispatch high-priority concierge WhatsApp message offering alternate UPI/NetBanking rail or manual reconciliation.",
+          : "Dispatch high-priority concierge Voice call or Email offering alternate payment method or manual reconciliation.",
       remainingAmountAtRisk: item.amount,
       currentRecoveryProbability: 0.35,
       escalationTimestamp: now.toISOString(),
@@ -1956,9 +1956,8 @@ AVAILABLE RECOVERY CAPABILITIES:
 - SMART_RETRY: Intelligent Network Retry with adaptive network token
 - DELAYED_RETRY: Scheduled Off-Peak Retry
 - PAYMENT_LINK: Multi-Rail Payment Link (Card/UPI/NetBanking)
-- WHATSAPP_OUTREACH: WhatsApp 1-Click UPI Intent Link
-- SMS_OUTREACH: SMS Urgent Recovery Outreach
-- EMAIL_OUTREACH: Formal Billing Resolution Email
+- VOICE_CALL: AI Voice Outreach Call via Exotel
+- EMAIL_OUTREACH: Formal Billing Resolution Email via Resend
 - CARD_UPDATE_LINK: Hosted Card & Mandate Update Link
 - UPI_REAUTHORIZATION: UPI AutoPay Mandate Re-auth
 - ALTERNATE_PAYMENT_METHOD: Alternate Payment Method / Rail Switch
@@ -1970,18 +1969,18 @@ AVAILABLE RECOVERY CAPABILITIES:
 
 TASK:
 1. Reassess the current state and telemetry feedback from past attempts.
-2. Select the optimal NEXT capability dynamically. DO NOT use a static fixed sequence.
+2. Select the optimal NEXT capability dynamically (EMAIL_OUTREACH or VOICE_CALL for customer outreach). DO NOT use a static fixed sequence.
 3. Formulate the precise strategy and tailored message / parameters.
 4. Determine if this intervention will successfully recover the payment or require further observation. (For realistic simulation in this sandbox loop, decide if this iteration achieves full settlement based on the customer tier, failure reason, and capability applied).
 
 Respond strictly in valid JSON matching this schema:
 {
-  "selectedCapability": "One of: SMART_RETRY | DELAYED_RETRY | PAYMENT_LINK | WHATSAPP_OUTREACH | SMS_OUTREACH | EMAIL_OUTREACH | CARD_UPDATE_LINK | UPI_REAUTHORIZATION | ALTERNATE_PAYMENT_METHOD | ALTERNATE_GATEWAY | PROMISE_TO_PAY | GRACE_PERIOD | RETENTION_OFFER | HUMAN_ESCALATION",
+  "selectedCapability": "One of: SMART_RETRY | DELAYED_RETRY | PAYMENT_LINK | VOICE_CALL | EMAIL_OUTREACH | CARD_UPDATE_LINK | UPI_REAUTHORIZATION | ALTERNATE_PAYMENT_METHOD | ALTERNATE_GATEWAY | PROMISE_TO_PAY | GRACE_PERIOD | RETENTION_OFFER | HUMAN_ESCALATION",
   "actionTitle": "Descriptive title for this specific action",
   "decisionRationale": "Deep AI reasoning explaining why this capability was chosen given previous attempt observations",
   "selectedStrategy": "Name of the recovery strategy",
   "tailoredMessage": "Customer outreach message if applicable, or gateway instruction summary",
-  "channel": "One of: WHATSAPP | SMS | EMAIL | GATEWAY | UPI | OPERATIONS",
+  "channel": "One of: VOICE | EMAIL | GATEWAY | UPI | OPERATIONS",
   "simulatedSettlement": boolean,
   "recoveryProbability": number,
   "telemetryObservation": "Realistic telemetry feedback observed following execution (e.g. customer click, gateway auth code, webhook delivery, or settlement confirmation)",
@@ -2020,11 +2019,11 @@ Respond strictly in valid JSON matching this schema:
 
     if (currentIteration === 1) {
       if (item.category === "UPI" || item.scenario_type.includes("upi")) {
-        cap = "WHATSAPP_OUTREACH";
-        title = "Dispatched 1-Click WhatsApp UPI Intent";
-        reason = "UPI failures have high recovery rate via immediate WhatsApp deep-link.";
-        observation = "WhatsApp delivered. Customer clicked link at T+8s, pending UPI MPIN entry.";
-        psp = "UPI_INTENT_DELIVERED_200";
+        cap = "VOICE_CALL";
+        title = "Dispatched Automated AI Voice Call (Exotel)";
+        reason = "Automated voice call with interactive prompt provides immediate engagement for time-sensitive transactions.";
+        observation = "Exotel voice call answered. Customer listened to prompt and requested payment link via email.";
+        psp = "VOICE_CALL_COMPLETED_200";
       } else if (item.category === "CARD" || item.scenario_type.includes("card")) {
         cap = "SMART_RETRY";
         title = "Triggered Intelligent Network Retry";
@@ -2033,7 +2032,7 @@ Respond strictly in valid JSON matching this schema:
         psp = "AUTH_SOFT_DECLINE_RETRYABLE";
       } else if (item.category === "INVOICE") {
         cap = "EMAIL_OUTREACH";
-        title = "Dispatched Executive AP Resolution Notice";
+        title = "Dispatched Executive AP Resolution Notice (Resend)";
         reason = "B2B invoices require structured AP notification with digital payment link.";
         observation = "Email opened by accounts payable. Awaiting payment authorization.";
         psp = "INVOICE_EMAIL_DELIVERED_200";
@@ -2054,11 +2053,11 @@ Respond strictly in valid JSON matching this schema:
         psp = "UPI_MANDATE_AUTH_SUCCESS_200";
         settled = true; // Succeeded on 2nd smart attempt
       } else {
-        cap = "WHATSAPP_OUTREACH";
-        title = "Dispatched Urgent WhatsApp Resolution Link";
-        reason = "Escalating channel after initial email to mobile messenger.";
-        observation = "Customer clicked WhatsApp link and completed payment via UPI.";
-        psp = "PAYMENT_SETTLED_UPI_200";
+        cap = "EMAIL_OUTREACH";
+        title = "Dispatched Direct Resolution Email (Resend)";
+        reason = "Escalating cross-channel outreach with formal digital invoice.";
+        observation = "Customer clicked invoice email link and completed payment.";
+        psp = "PAYMENT_SETTLED_EMAIL_200";
         settled = true;
       }
     } else {
@@ -2077,7 +2076,7 @@ Respond strictly in valid JSON matching this schema:
       decisionRationale: reason,
       selectedStrategy: title,
       tailoredMessage: `Hi ${item.customer_name}, please resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: https://pay.recoverly.test/resolve/${item.id}`,
-      channel: "WHATSAPP",
+      channel: cap === "VOICE_CALL" ? "VOICE" : cap === "EMAIL_OUTREACH" ? "EMAIL" : "GATEWAY",
       simulatedSettlement: settled,
       recoveryProbability: settled ? 0.94 : 0.76,
       telemetryObservation: observation,
@@ -2344,7 +2343,7 @@ export async function reassessSandboxIncidentWithAI(
           ? "Initiate executive AP phone outreach, verify purchase order authorization, and propose formal payment restructuring."
           : item.category === "CHURN"
           ? "Schedule immediate retention call with Account Manager and offer tailored 15% annual commitment discount."
-          : "Dispatch high-priority concierge WhatsApp message offering alternate UPI/NetBanking rail or manual reconciliation.",
+          : "Dispatch high-priority concierge Voice call or Email offering alternate payment rail or manual reconciliation.",
       escalationTimestamp: now.toISOString(),
       assignedTier: "Senior Revenue Operations Specialist",
     };
@@ -2399,7 +2398,7 @@ ${params?.customInstruction ? `- Operator Directive: "${params.customInstruction
 
 Payment is still unsettled. Reassess telemetry and formulate the NEXT recovery strategy in the cascade.
 Options include:
-- Omnichannel Fallback (e.g., switch from SMS to 1-Click WhatsApp UPI Intent)
+- Cross-Channel Outreach (e.g., switch between Resend Email and Exotel Voice Outreach)
 - Incentive Discount (e.g., dynamic 5-10% immediate rescue discount)
 - Acquirer Failover (e.g., route through backup payment gateway)
 - Promise-to-Pay Lock
@@ -2422,8 +2421,7 @@ Your response MUST be a valid JSON object matching this schema:
   ],
   "escalationReason": "When to halt if this step also fails",
   "customerMessage": {
-    "whatsapp": "Follow-up WhatsApp message with fresh 1-click resolution link",
-    "sms": "Concise SMS follow-up",
+    "voice": "Interactive AI voice script for Exotel phone call",
     "email": { "subject": "Subject line", "body": "Email body" }
   },
   "confidence": 0.88,
@@ -2468,7 +2466,7 @@ Your response MUST be a valid JSON object matching this schema:
       ],
       rootCause: `Initial recovery attempt did not achieve settlement. Escalating through recovery cascade.`,
       aiReasoning: "Awaiting live Gemini AI reasoning to formulate next cascade step.",
-      selectedStrategy: "Cascaded Omnichannel Fallback",
+      selectedStrategy: "Cascaded Cross-Channel Fallback",
       strategyJustification: "Escalating channel touchpoint after initial automated retry.",
       recommendedAction: "SEND_PAYMENT_LINK",
       recommendedTiming: "Immediate Window",
@@ -2479,8 +2477,7 @@ Your response MUST be a valid JSON object matching this schema:
       ],
       escalationReason: "Repeated non-response or max attempt boundary",
       customerMessage: {
-        whatsapp: `Hi ${item.customer_name}, following up regarding your payment of ${item.currency} ${item.amount.toLocaleString()}. Tap here to resolve securely in 1 click: https://pay.recoverly.test/resolve/${item.id}`,
-        sms: `Recoverly: Follow-up on your ${item.currency} ${item.amount.toLocaleString()} payment. Tap to complete: https://rcvr.ly/${item.id.slice(-6)}`,
+        voice: `Hello ${item.customer_name}, this is Recoverly with an update regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}. We have dispatched a direct payment resolution link to your email.`,
         email: {
           subject: `Follow-up: Resolving your ${item.currency} ${item.amount.toLocaleString()} payment`,
           body: `Dear ${item.customer_name},\n\nWe are following up regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}.\n\nPlease click below to complete:\nhttps://pay.recoverly.test/resolve/${item.id}\n\nBest regards,\nRecoverly Operations`,
@@ -2707,7 +2704,7 @@ export async function analyzeDemoScenarioWithAI(scenarioKey: string, customInstr
       paymentMethod: result.incident.paymentMethod,
       failureCode: result.incident.failureCode,
       customerLookupEmail: result.customer?.email || "customer@example.test",
-      defaultChannel: "WHATSAPP",
+      defaultChannel: "EMAIL",
       baselineSummary: result.analysis.aiReasoning || result.analysis.rootCause,
     },
     customer: result.customer,
@@ -2753,10 +2750,10 @@ export async function listHumanEscalations() {
         attemptNumber: a.attemptNumber || 1,
         actionTitle: a.actionTitle || "Outreach Dispatch",
         actionType: a.actionType || "PAYMENT_LINK",
-        channel: a.selectedChannel || a.aiChannel || "WHATSAPP",
+        channel: a.selectedChannel || a.aiChannel || "EMAIL",
         strategy: a.aiStrategy || a.strategyName || "Autonomous Recovery",
         status: a.providerStatus === "FAILED" ? "FAILED" : (a.status === "FAILED" ? "FAILED" : "SENT"),
-        provider: a.provider || "TWILIO",
+        provider: a.provider || "RESEND",
         providerMessageId: a.providerMessageId,
         providerErrorCode: a.providerErrorCode,
         providerErrorMessage: a.providerErrorMessage,
@@ -2886,12 +2883,12 @@ export async function listHumanEscalations() {
         maxAttempts: 3,
         priority: "CRITICAL",
         status: "ESCALATED_TO_HUMAN",
-        escalationReason: "Safety Boundary Exceeded: 3 automated retry & payment link dispatches attempted across SMS, WhatsApp, and Email without settlement.",
+        escalationReason: "Safety Boundary Exceeded: 3 automated retry & outreach dispatches attempted across Email and Voice without settlement.",
         escalatedAt: new Date(now.getTime() - 25 * 60000).toISOString(),
         recommendedHumanAction: "Direct Key Account Director VIP call. Offer corporate RTGS/NEFT routing or 7-day custom invoice extension.",
         lastAiStrategy: "Executive High-Touch Outreach + Invoice Link",
         lastProviderResult: "UNRESPONSIVE",
-        lastAiAction: "WhatsApp VIP Template (Twilio Sandbox Delivered)",
+        lastAiAction: "Email Executive Invoice Notice (Resend Delivered)",
         owner: null,
         operatorNotes: [
           {
@@ -2908,46 +2905,46 @@ export async function listHumanEscalations() {
         attempts: [
           {
             attemptNumber: 1,
-            actionTitle: "Automated WhatsApp Invoice Link",
+            actionTitle: "Executive Email Invoice Notice",
             actionType: "PAYMENT_LINK",
-            channel: "WHATSAPP",
+            channel: "EMAIL",
             strategy: "Immediate Multi-Rail Link",
             status: "SENT",
-            provider: "TWILIO",
-            providerMessageId: "SM998127391823a",
+            provider: "RESEND",
+            providerMessageId: "re_998127391823a",
             providerErrorCode: null,
             executedAt: new Date(now.getTime() - 25 * 60000).toISOString(),
-            details: "Delivered WhatsApp notification with Razorpay direct payment URL.",
+            details: "Delivered formal invoice notification with Razorpay direct payment URL via Resend.",
             generatedMessage: "Hi Aarav, your CloudScale enterprise subscription renewal of ₹1,45,000 was declined (Card limit exceeded). Settle securely here: https://pay.recoverly.ai/inv-9921",
           },
           {
             attemptNumber: 2,
-            actionTitle: "Urgent SMS Reminder",
-            actionType: "SMS_ALERT",
-            channel: "SMS",
-            strategy: "Urgency Escalation",
-            status: "SENT",
-            provider: "TWILIO",
-            providerMessageId: "SM882194729181b",
-            providerErrorCode: null,
-            executedAt: new Date(now.getTime() - 18 * 60000).toISOString(),
-            details: "SMS dispatched via Twilio Alpha.",
-            generatedMessage: "URGENT: CloudScale account compute suspension in 24 hours due to unpaid invoice ₹1,45,000. Pay now: https://pay.recoverly.ai/inv-9921",
-          },
-          {
-            attemptNumber: 3,
             actionTitle: "Automated Interactive Voice Dispatch",
             actionType: "VOICE_CALL",
             channel: "VOICE",
-            strategy: "Final Safety Call",
+            strategy: "Direct Customer Alert",
             status: "FAILED",
-            provider: "TWILIO",
-            providerMessageId: "CA119284729102c",
+            provider: "EXOTEL",
+            providerMessageId: "exo_call_11928472",
             providerErrorCode: "BUSY_OR_NO_ANSWER",
             providerErrorMessage: "Subscriber line busy / no answer after 30s ring",
+            executedAt: new Date(now.getTime() - 18 * 60000).toISOString(),
+            details: "Automated voice agent attempted audio connection via Exotel.",
+            generatedMessage: "Automated outbound voice call initiated via Exotel. Subscriber did not answer.",
+          },
+          {
+            attemptNumber: 3,
+            actionTitle: "Final Notice Email Alert",
+            actionType: "EMAIL_ALERT",
+            channel: "EMAIL",
+            strategy: "Final Safety Handoff Notice",
+            status: "SENT",
+            provider: "RESEND",
+            providerMessageId: "re_882194729181b",
+            providerErrorCode: null,
             executedAt: new Date(now.getTime() - 10 * 60000).toISOString(),
-            details: "Automated voice agent attempted audio prompt connection.",
-            generatedMessage: "Automated outbound voice call initiated. User did not answer.",
+            details: "Final notice email dispatched via Resend before human escalation.",
+            generatedMessage: "URGENT: CloudScale account compute suspension pending due to unpaid invoice ₹1,45,000. Pay now: https://pay.recoverly.ai/inv-9921",
           },
         ],
         timeline: [
@@ -2963,24 +2960,24 @@ export async function listHumanEscalations() {
             id: "tl-demo-2",
             timestamp: "10:32 AM",
             type: "ACT_SIMULATE",
-            title: "Attempt 1: WhatsApp Payment Link Dispatched",
-            description: "Sent authenticated link with 48h validity.",
+            title: "Attempt 1: Email Payment Link Dispatched (Resend)",
+            description: "Sent authenticated link with 48h validity via Resend.",
             status: "COMPLETED",
           },
           {
             id: "tl-demo-3",
             timestamp: "10:37 AM",
             type: "ACT_SIMULATE",
-            title: "Attempt 2: SMS Urgency Alert Sent",
-            description: "Sent SMS notification via Twilio.",
+            title: "Attempt 2: Outbound Voice Call (Exotel)",
+            description: "Voice call attempted via Exotel. Line busy / no answer.",
             status: "COMPLETED",
           },
           {
             id: "tl-demo-4",
             timestamp: "10:42 AM",
             type: "ACT_SIMULATE",
-            title: "Attempt 3: Voice Call Attempt Failed",
-            description: "Call unanswered (line busy). 3-attempt limit reached.",
+            title: "Attempt 3: Final Follow-Up Email Dispatched (Resend)",
+            description: "Sent final warning email via Resend. 3-attempt limit reached.",
             status: "COMPLETED",
           },
           {
@@ -2995,7 +2992,7 @@ export async function listHumanEscalations() {
         escalationDossier: {
           incidentId: "esc-demo-enterprise-01",
           whyStopped: "Bounded Safety Limit: Exactly 3 automated recovery attempts executed. Brand protection rules prevent excessive automated outreach.",
-          attemptsSummary: "3 attempts across WhatsApp, SMS, and Voice. 2 delivered, 1 unanswered. Zero payment received.",
+          attemptsSummary: "3 attempts across Email and Voice. 2 delivered, 1 unanswered. Zero payment received.",
           recommendedHumanAction: "Direct Key Account Director VIP call. Offer corporate RTGS/NEFT routing or 7-day custom invoice extension.",
           escalationTimestamp: new Date(now.getTime() - 25 * 60000).toISOString(),
         },
@@ -3018,15 +3015,15 @@ export async function listHumanEscalations() {
         status: "ESCALATED_TO_HUMAN",
         escalationReason: "Bank reported U30 mandate cancellation error on NPCI network. AI cannot auto-retry revoked mandates.",
         escalatedAt: new Date(now.getTime() - 55 * 60000).toISOString(),
-        recommendedHumanAction: "Send new UPI Autopay authorization link via WhatsApp or request alternate corporate credit card details.",
+        recommendedHumanAction: "Send new UPI Autopay authorization link via Email or request alternate corporate credit card details.",
         lastAiStrategy: "Mandate Re-registration Prompt",
         lastProviderResult: "FAILED (U30)",
-        lastAiAction: "SMS Mandate Re-auth Link Dispatched",
+        lastAiAction: "Email Mandate Re-auth Link Dispatched",
         owner: "Mohnish Kaplish",
         operatorNotes: [
           {
             id: "note-init-2",
-            note: "Claimed by Mohnish. WhatsApp message sent requesting Priya to authenticate the newly generated NPCI e-mandate.",
+            note: "Claimed by Mohnish. Email sent requesting Priya to authenticate the newly generated NPCI e-mandate.",
             author: "Mohnish Kaplish",
             timestamp: new Date(now.getTime() - 30 * 60000).toISOString(),
           },
@@ -3051,27 +3048,27 @@ export async function listHumanEscalations() {
           },
           {
             attemptNumber: 2,
-            actionTitle: "WhatsApp Mandate Re-link Prompt",
+            actionTitle: "Email Mandate Re-link Prompt",
             actionType: "PAYMENT_LINK",
-            channel: "WHATSAPP",
+            channel: "EMAIL",
             strategy: "Zero-Friction Mandate Link",
             status: "SENT",
-            provider: "TWILIO",
-            providerMessageId: "SM771239847120a",
+            provider: "RESEND",
+            providerMessageId: "re_771239847120a",
             executedAt: new Date(now.getTime() - 58 * 60000).toISOString(),
-            details: "Sent e-mandate registration flow URL.",
+            details: "Sent e-mandate registration flow URL via Resend.",
           },
           {
             attemptNumber: 3,
-            actionTitle: "Urgent SMS Mandate Notification",
-            actionType: "SMS_ALERT",
-            channel: "SMS",
+            actionTitle: "Voice Mandate Notification Call",
+            actionType: "VOICE_CALL",
+            channel: "VOICE",
             strategy: "Direct Customer Alert",
             status: "SENT",
-            provider: "TWILIO",
-            providerMessageId: "SM661928471928b",
+            provider: "EXOTEL",
+            providerMessageId: "exo_call_66192847",
             executedAt: new Date(now.getTime() - 55 * 60000).toISOString(),
-            details: "Dispatched SMS alert with 24h grace period.",
+            details: "Dispatched Voice call alert with 24h grace period via Exotel.",
           },
         ],
         timeline: [
@@ -3095,7 +3092,7 @@ export async function listHumanEscalations() {
         escalationDossier: {
           incidentId: "esc-demo-saas-02",
           whyStopped: "Mandate revoked by bank. Autonomous retries are ineffective without fresh UPI mandate token creation.",
-          attemptsSummary: "1 retry failed (U30), 2 outreach links dispatched. No customer payment received.",
+          attemptsSummary: "1 retry failed (U30), 2 outreach dispatches executed. No customer payment received.",
           recommendedHumanAction: "Call Priya to assist with instant 30-second UPI AutoPay setup or alternate card link.",
           escalationTimestamp: new Date(now.getTime() - 55 * 60000).toISOString(),
         },

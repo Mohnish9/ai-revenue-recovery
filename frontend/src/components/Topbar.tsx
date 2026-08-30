@@ -80,11 +80,6 @@ export function Topbar({ page, onToggleMenu, onRefresh, refreshing }: TopbarProp
             {refreshing ? "⟳" : "↻"}
           </button>
         )}
-        <div className="api-status ready">
-          <i></i>
-          <span>Live Supabase Auth</span>
-        </div>
-
         {/* User Profile Pill & Logout Button */}
         <div style={{ position: "relative" }}>
           <button

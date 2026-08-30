@@ -449,11 +449,6 @@ export function TopNav({
             </button>
           )}
 
-          <div className="aww-status-indicator">
-            <span className="aww-status-dot"></span>
-            <span className="aww-status-label">Supabase Live</span>
-          </div>
-
           {/* User Profile Pill & Dropdown */}
           <div className="aww-user-wrapper">
             <button

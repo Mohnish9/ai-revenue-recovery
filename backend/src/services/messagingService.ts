@@ -10,8 +10,8 @@ import { getDemoTestContactConfig } from "./demoTestContactService.js";
 export type DeliveryMode = "REAL" | "SIMULATED" | "FAILED";
 
 export interface OutboundDeliveryResult {
-  channel: "WHATSAPP" | "SMS" | "EMAIL";
-  provider: "TWILIO" | "RESEND" | "SIMULATION_ENGINE";
+  channel: "EMAIL" | "VOICE" | "WHATSAPP" | "SMS";
+  provider: "RESEND" | "EXOTEL" | "TWILIO" | "SIMULATION_ENGINE";
   deliveryMode: DeliveryMode;
   status: "SENT" | "SIMULATED" | "FAILED";
   deliveryLabel: string;
@@ -247,7 +247,7 @@ export async function sendWhatsAppMessage(params: {
       let deliveryLabel = `WhatsApp Rejected by Twilio (Code: ${data.code || response.status})`;
 
       if (data.code === 572002) {
-        errorMsg = "Twilio Trial Restriction 572002: No Twilio trial phone number is assigned for messaging to this destination number. Recipient is unverified in Twilio Console.";
+        errorMsg = "Twilio Trial Restriction (Error 572002): In Twilio Trial mode, WhatsApp/SMS can only be sent to verified phone numbers. To send messages, either add this number to 'Verified Caller IDs' in Twilio Console (Phone Numbers > Verified Caller IDs), or enable 'Demo Test Contact' in Recoverly with your verified phone number.";
       } else if (data.code === 21654) {
         errorMsg = "Twilio WhatsApp Sandbox Error 21654: Outbound WhatsApp Sandbox messages require an active 24-hour session (send 'join <keyword>' to +14155238886 from recipient phone) or a configured TWILIO_WHATSAPP_CONTENT_SID template.";
       } else if (data.code === 63007) {
@@ -568,6 +568,7 @@ export async function sendEmailMessage(params: {
 }): Promise<OutboundDeliveryResult> {
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
   const emailFrom = process.env.EMAIL_FROM?.trim() || "onboarding@resend.dev";
+  const isResendTestingDomain = emailFrom.toLowerCase().includes("onboarding@resend.dev") || emailFrom.toLowerCase().endsWith("@resend.dev");
   const rawDestination = params.toEmail?.trim() || "";
   const now = new Date().toISOString();
 
@@ -575,8 +576,16 @@ export async function sendEmailMessage(params: {
   const isCustomerEmailValid = Boolean(rawDestination && emailRegex.test(rawDestination));
 
   const demoContact = getDemoTestContactConfig();
-  const isDemoEmailValid = Boolean(demoContact.verifiedEmail && emailRegex.test(demoContact.verifiedEmail.trim()));
-  const shouldUseTestContact = Boolean(demoContact.enabled && isDemoEmailValid);
+  const fallbackTestEmail = (demoContact.verifiedEmail || demoContact.testEmail || process.env.RESEND_TEST_EMAIL || process.env.DEMO_TEST_EMAIL || "").trim();
+  const isDemoEmailValid = Boolean(fallbackTestEmail && emailRegex.test(fallbackTestEmail));
+  
+  // Use test contact if explicitly enabled OR if Resend is in testing domain mode and customer email is not the test email
+  const shouldUseTestContact = Boolean(
+    isDemoEmailValid && (
+      demoContact.enabled ||
+      (isResendTestingDomain && rawDestination.toLowerCase() !== fallbackTestEmail.toLowerCase())
+    )
+  );
 
   // If no Resend API Key configured, return truthful SIMULATED status
   if (!resendApiKey) {
@@ -625,7 +634,7 @@ export async function sendEmailMessage(params: {
     };
   }
 
-  const targetEmail = shouldUseTestContact ? demoContact.verifiedEmail.trim() : rawDestination;
+  const targetEmail = shouldUseTestContact ? fallbackTestEmail : rawDestination;
 
   try {
     const htmlPayload =
@@ -706,7 +715,12 @@ export async function sendEmailMessage(params: {
         dispatchedAt: now,
       };
     } else {
-      const errorMsg = data.message || `Resend error HTTP ${response.status} (${data.name || "API_ERROR"})`;
+      let errorMsg = data.message || `Resend error HTTP ${response.status} (${data.name || "API_ERROR"})`;
+      if (data.name === "validation_error" || data.statusCode === 403) {
+        if (data.message && (data.message.includes("testing emails to your own email address") || data.message.includes("verify a domain"))) {
+          errorMsg = `Resend Free/Testing Restriction (validation_error): In Resend testing mode, emails can only be sent to your account email address. To deliver real emails, verify a custom domain in Resend, or enable 'Demo Test Contact' in Recoverly with your account email.`;
+        }
+      }
       console.warn("[Email Adapter] Resend call returned rejection:", errorMsg);
 
       return {

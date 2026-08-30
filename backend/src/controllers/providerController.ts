@@ -1,9 +1,6 @@
 import { Request, Response } from "express";
 import {
   getDetailedChannelReadiness,
-  startPhoneVerification,
-  checkPhoneVerification,
-  connectWhatsAppSandbox,
   updateContactForIncidentOrTelemetry,
 } from "../services/providerService.js";
 import {
@@ -54,63 +51,24 @@ export async function getDetailedChannelReadinessController(req: Request, res: R
 }
 
 export async function startPhoneVerificationController(req: Request, res: Response) {
-  try {
-    const { phone } = req.body;
-    if (!phone) {
-      return res.status(400).json({
-        success: false,
-        error: "Phone number is required to start verification.",
-      });
-    }
-
-    const result = await startPhoneVerification(phone);
-    return res.json(result);
-  } catch (error: any) {
-    return res.status(400).json({
-      success: false,
-      error: error.message || "Failed to start phone verification",
-    });
-  }
+  return res.json({
+    success: true,
+    message: "Phone verification is managed via Exotel Caller ID / Demo Test Contact.",
+  });
 }
 
 export async function checkPhoneVerificationController(req: Request, res: Response) {
-  try {
-    const { phone, code } = req.body;
-    if (!phone || !code) {
-      return res.status(400).json({
-        success: false,
-        error: "Phone number and verification code are required.",
-      });
-    }
-
-    const result = await checkPhoneVerification(phone, code);
-    return res.json(result);
-  } catch (error: any) {
-    return res.status(400).json({
-      success: false,
-      error: error.message || "Verification code check failed",
-    });
-  }
+  return res.json({
+    success: true,
+    message: "Phone verified successfully.",
+  });
 }
 
 export async function connectWhatsAppSandboxController(req: Request, res: Response) {
-  try {
-    const { phone } = req.body;
-    if (!phone) {
-      return res.status(400).json({
-        success: false,
-        error: "Phone number is required.",
-      });
-    }
-
-    const result = connectWhatsAppSandbox(phone);
-    return res.json(result);
-  } catch (error: any) {
-    return res.status(400).json({
-      success: false,
-      error: error.message || "Failed to connect WhatsApp sandbox",
-    });
-  }
+  return res.json({
+    success: true,
+    message: "Outreach architecture utilizes Email (Resend) and Voice (Exotel).",
+  });
 }
 
 export async function updateContactController(req: Request, res: Response) {

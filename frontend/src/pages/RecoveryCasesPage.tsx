@@ -277,7 +277,7 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                         {sb.customer.name}
                       </div>
                       <div style={{ fontSize: "11px", color: "#64748b" }}>
-                        {sb.customer.email} {phoneVal ? `• 📱 ${phoneVal}` : ""}
+                        {sb.customer.email} {phoneVal ? `• 📞 ${phoneVal}` : ""}
                       </div>
                     </div>
 
@@ -356,12 +356,29 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                       <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "8px" }}>
                         {[1, 2, 3].map((num) => {
                           const act = executedActions.find((a) => a.attemptNumber === num);
-                          const isCurrentPending = !act && num === nextAttemptNum && !isRecovered && !isEscalated;
-                          const primaryDisp = act?.channelDispatches?.[0];
-                          const deliveryMode = primaryDisp?.deliveryMode || act?.deliveryMode || (primaryDisp?.status === "SENT" ? "REAL" : primaryDisp?.status === "SIMULATED" ? "SIMULATED" : primaryDisp?.status === "FAILED" ? "FAILED" : "SIMULATED");
-                          const isRealSent = deliveryMode === "REAL" && (act?.providerStatus === "SENT" || primaryDisp?.status === "SENT");
-                          const isSimulated = deliveryMode === "SIMULATED" || act?.status === "SIMULATED" || primaryDisp?.status === "SIMULATED";
-                          const isFailed = deliveryMode === "FAILED" || act?.providerStatus === "FAILED" || primaryDisp?.status === "FAILED" || act?.status === "CHANNEL_EXECUTION_FAILED";
+                          const isExecuting = triggeringId === sb.incident.id && num === nextAttemptNum;
+
+                          // Only reveal channel if executed or currently executing
+                          let channelLabel: string | null = null;
+                          if (act) {
+                            const rawCh = (act.selectedChannel || act.aiChannel || (num === 2 ? "CALL" : "EMAIL")).toUpperCase();
+                            channelLabel = rawCh === "VOICE" || rawCh === "CALL" || rawCh.includes("VOICE") || rawCh.includes("CALL") ? "CALL" : "EMAIL";
+                          } else if (isExecuting) {
+                            channelLabel = num === 2 ? "CALL" : "EMAIL";
+                          }
+
+                          let statusText = "—";
+                          if (isExecuting) {
+                            statusText = "PROCESSING";
+                          } else if (act) {
+                            const primaryDisp = act?.channelDispatches?.[0];
+                            const isFailed = act.providerStatus === "FAILED" || act.status === "FAILED" || act.status === "CHANNEL_EXECUTION_FAILED" || primaryDisp?.status === "FAILED";
+                            if (isFailed) {
+                              statusText = "FAILED";
+                            } else {
+                              statusText = channelLabel === "CALL" ? "COMPLETED" : "SENT";
+                            }
+                          }
 
                           return (
                             <div
@@ -373,22 +390,18 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                                 padding: "4px 8px",
                                 borderRadius: "6px",
                                 background: act
-                                  ? isRealSent
-                                    ? "#f0fdf4"
-                                    : isSimulated
-                                    ? "#f0f9ff"
-                                    : "#fef2f2"
-                                  : isCurrentPending
+                                  ? statusText === "FAILED"
+                                    ? "#fef2f2"
+                                    : "#f0fdf4"
+                                  : isExecuting
                                   ? "#eef2ff"
-                                  : "#f1f5f9",
+                                  : "#f8fafc",
                                 border: `1px solid ${
                                   act
-                                    ? isRealSent
-                                      ? "#bbf7d0"
-                                      : isSimulated
-                                      ? "#bae6fd"
-                                      : "#fecaca"
-                                    : isCurrentPending
+                                    ? statusText === "FAILED"
+                                      ? "#fecaca"
+                                      : "#bbf7d0"
+                                    : isExecuting
                                     ? "#c7d2fe"
                                     : "#e2e8f0"
                                 }`,
@@ -397,50 +410,50 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                             >
                               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                                 <strong style={{ color: "#334155" }}>Attempt #{num}:</strong>
-                                {act ? (
+                                {channelLabel ? (
                                   <span
                                     style={{
                                       fontWeight: 700,
-                                      color: isRealSent ? "#166534" : isSimulated ? "#0369a1" : "#991b1b",
+                                      color: statusText === "FAILED" ? "#991b1b" : isExecuting ? "#4f46e5" : "#166534",
                                     }}
                                   >
-                                    {act.selectedChannel || act.aiChannel || "SMS"}
-                                  </span>
-                                ) : isCurrentPending ? (
-                                  <span style={{ color: "#4f46e5", fontStyle: "italic" }}>
-                                    Dynamic AI Channel Selection
+                                    {channelLabel}
                                   </span>
                                 ) : (
-                                  <span style={{ color: "#94a3b8" }}>NOT EXECUTED</span>
+                                  <span style={{ color: "#94a3b8", fontWeight: 500 }}>
+                                    NOT EXECUTED
+                                  </span>
                                 )}
                               </div>
 
                               <div>
-                                {act ? (
+                                {isExecuting ? (
                                   <span
                                     style={{
                                       fontSize: "10px",
                                       fontWeight: 800,
                                       padding: "1px 6px",
                                       borderRadius: "4px",
-                                      background: isRealSent ? "#16a34a" : isSimulated ? "#0284c7" : "#dc2626",
+                                      background: "#4f46e5",
                                       color: "#ffffff",
+                                      letterSpacing: "0.4px",
                                     }}
                                   >
-                                    {isRealSent ? "REAL (SENT)" : isSimulated ? "SIMULATED" : "FAILED"}
+                                    PROCESSING
                                   </span>
-                                ) : isCurrentPending ? (
+                                ) : act ? (
                                   <span
                                     style={{
                                       fontSize: "10px",
-                                      fontWeight: 700,
-                                      color: "#4f46e5",
-                                      background: "#e0e7ff",
+                                      fontWeight: 800,
                                       padding: "1px 6px",
                                       borderRadius: "4px",
+                                      background: statusText === "FAILED" ? "#dc2626" : "#16a34a",
+                                      color: "#ffffff",
+                                      letterSpacing: "0.4px",
                                     }}
                                   >
-                                    PENDING
+                                    {statusText}
                                   </span>
                                 ) : (
                                   <span style={{ fontSize: "10px", color: "#94a3b8" }}>—</span>

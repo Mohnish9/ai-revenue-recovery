@@ -62,7 +62,7 @@ export interface TelemetryAIAnalysis {
   reasoning: string;
   revenueAtRisk: number;
   recommendedStrategy: string;
-  recommendedChannel: "EMAIL" | "WHATSAPP" | "SMS";
+  recommendedChannel: "EMAIL" | "VOICE";
   explanation: string;
   modelName: string;
   createdAt: string;
@@ -837,7 +837,7 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
   reasoning: string;
   revenueAtRisk: number;
   recommendedStrategy: string;
-  recommendedChannel: "EMAIL" | "WHATSAPP" | "SMS";
+  recommendedChannel: "EMAIL" | "VOICE";
   explanation: string;
 } {
   const events = record.events || [];
@@ -850,7 +850,7 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
   let evidence: string[] = ["Checkout session initiated", "Payment selection viewed", "No successful settlement event recorded"];
   let reasoning = "Observed high customer intent followed by inactivity during payment selection.";
   let recommendedStrategy = "1-click secure payment recovery link dispatch";
-  let recommendedChannel: "EMAIL" | "WHATSAPP" | "SMS" = "WHATSAPP";
+  let recommendedChannel: "EMAIL" | "VOICE" = "EMAIL";
 
   if (allPayloadStr.includes("51") || allPayloadStr.includes("insufficient_funds") || eventTypes.some((t) => t.includes("INSUFFICIENT"))) {
     detectedScenarioType = "INSUFFICIENT_FUNDS";
@@ -863,7 +863,7 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
     ];
     reasoning = "The observable decline code 51 confirms a balance constraint on the primary payment instrument.";
     recommendedStrategy = "Smart retry cadence coupled with conversational balance notification";
-    recommendedChannel = "WHATSAPP";
+    recommendedChannel = "EMAIL";
   } else if (allPayloadStr.includes("54") || allPayloadStr.includes("expired_card") || allPayloadStr.includes("expiry_on_file") || eventTypes.some((t) => t.includes("EXPIR"))) {
     detectedScenarioType = "EXPIRED_CARD";
     confidence = 98;
@@ -875,7 +875,7 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
     ];
     reasoning = "Hard card expiration detected. Customer needs a frictionless 1-click update link to enter renewed card details.";
     recommendedStrategy = "Self-service 1-click card credential update portal";
-    recommendedChannel = "SMS";
+    recommendedChannel = "EMAIL";
   } else if (allPayloadStr.includes("3ds") || allPayloadStr.includes("otp") || allPayloadStr.includes("challenge") || eventTypes.some((t) => t.includes("3DS") || t.includes("ACS"))) {
     detectedScenarioType = "3DS_AUTHENTICATION_FAILURE";
     confidence = 94;
@@ -886,8 +886,8 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
       "Transaction terminated in unauthenticated state",
     ];
     reasoning = "High intent buyer failed at the 3DS verification step. Frictionless re-authentication or alternative UPI rail will recover revenue.";
-    recommendedStrategy = "Instant WhatsApp 1-tap re-authentication or UPI alternate rail";
-    recommendedChannel = "WHATSAPP";
+    recommendedStrategy = "Instant re-authentication guidance or UPI alternate rail";
+    recommendedChannel = "EMAIL";
   } else if (allPayloadStr.includes("504") || allPayloadStr.includes("socket_timeout") || allPayloadStr.includes("bank_gateway") || eventTypes.some((t) => t.includes("GATEWAY") || t.includes("TIMEOUT"))) {
     detectedScenarioType = "BANK_GATEWAY_TIMEOUT";
     confidence = 91;
@@ -899,7 +899,7 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
     ];
     reasoning = "Infrastructure latency caused payment drop. Requires double-debit reconciliation check before auto-retry.";
     recommendedStrategy = "Automated double-debit verification followed by seamless secondary rail retry";
-    recommendedChannel = "SMS";
+    recommendedChannel = "EMAIL";
   } else if (allPayloadStr.includes("autopay") || allPayloadStr.includes("mandate") || allPayloadStr.includes("npci") || allPayloadStr.includes("u19") || eventTypes.some((t) => t.includes("MANDATE"))) {
     detectedScenarioType = "UPI_MANDATE_FAILURE";
     confidence = 95;
@@ -910,8 +910,8 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
       "Active mandate UMN registered with past successful cycles",
     ];
     reasoning = "Mandate is valid but temporary remitter bank downtime prevented execution. Direct UPI collect request or retry will resolve.";
-    recommendedStrategy = "Direct 1-click UPI Intent push notification for instant settlement";
-    recommendedChannel = "WHATSAPP";
+    recommendedStrategy = "Direct 1-click UPI re-authorization link for instant settlement";
+    recommendedChannel = "EMAIL";
   } else if (allPayloadStr.includes("invoice") || allPayloadStr.includes("overdue") || allPayloadStr.includes("aging") || eventTypes.some((t) => t.includes("INVOICE"))) {
     detectedScenarioType = "OVERDUE_INVOICE";
     confidence = 97;
@@ -935,7 +935,7 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
     ];
     reasoning = "Customer is at immediate risk of voluntary churn before next renewal cycle. Requires proactive VIP retention intervention.";
     recommendedStrategy = "VIP Customer Success executive outreach offering retention grace and tailored plan review";
-    recommendedChannel = "EMAIL";
+    recommendedChannel = "VOICE";
   } else if (allPayloadStr.includes("subscription") || allPayloadStr.includes("recurring") || allPayloadStr.includes("dunning") || eventTypes.some((t) => t.includes("SUB_") || t.includes("RECURRING"))) {
     detectedScenarioType = "SUBSCRIPTION_RENEWAL_FAILURE";
     confidence = 93;
@@ -947,7 +947,7 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
     ];
     reasoning = "Active product usage confirms customer is getting value. A courteous notification with 1-click update prevents churn.";
     recommendedStrategy = "Conversational subscription renewal reminder with zero-friction 1-tap update";
-    recommendedChannel = "WHATSAPP";
+    recommendedChannel = "EMAIL";
   }
 
   return {
@@ -1060,7 +1060,7 @@ export async function analyzeTelemetryWithAI(telemetryId: string): Promise<{
       reasoning: "Classification inferred from event stream and decline response telemetry.",
       revenueAtRisk: existingStored.amount,
       recommendedStrategy: "Autonomous Smart Recovery Evaluation",
-      recommendedChannel: (existingStored.customer_phone ? "WHATSAPP" : "EMAIL") as "EMAIL" | "WHATSAPP" | "SMS",
+      recommendedChannel: (existingStored.customer_phone ? "VOICE" : "EMAIL") as "EMAIL" | "VOICE",
       explanation: `Active incident ${existingStored.id} already initialized for this telemetry signal.`,
       modelName: "gemini-3.7-flash",
       createdAt: existingStored.created_at,
@@ -1137,7 +1137,7 @@ Respond strictly in valid JSON matching this schema:
   "reasoning": "In-depth analytical explanation of why this classification was made from the raw event stream.",
   "revenueAtRisk": ${record.amount},
   "recommendedInitialStrategy": "Specific tactical action recommended for Attempt #1 recovery",
-  "recommendedChannel": "WHATSAPP" | "EMAIL" | "SMS",
+  "recommendedChannel": "EMAIL" | "VOICE",
   "explanation": "Executive summary of the AI detection findings"
 }`;
 
@@ -1186,7 +1186,7 @@ Respond strictly in valid JSON matching this schema:
     reasoning: aiResult.reasoning || "Classification inferred from event stream and decline response telemetry.",
     revenueAtRisk: Number(aiResult.revenueAtRisk) || record.amount,
     recommendedStrategy: aiResult.recommendedInitialStrategy || "Dynamic multi-channel recovery outreach",
-    recommendedChannel: aiResult.recommendedChannel || "WHATSAPP",
+    recommendedChannel: aiResult.recommendedChannel === "VOICE" ? "VOICE" : "EMAIL",
     explanation: aiResult.explanation || `Detected ${aiResult.detectedScenarioType} with ${aiResult.confidence}% confidence.`,
     modelName,
     createdAt: new Date().toISOString(),
