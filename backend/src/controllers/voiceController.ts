@@ -8,40 +8,40 @@ import {
 
 /**
  * Public dynamic voice recovery script endpoint for Exotel Voice flow.
- * Generates an AI-personalized voice script via Gemini (grounded in incident data).
+ * Generates or retrieves an AI-personalized voice script via Gemini (grounded in incident data).
  * Supports both GET and HEAD requests.
- * Returns strictly plain text (Content-Type: text/plain; charset=utf-8).
+ * Returns strictly plain text (Content-Type: text/plain; charset=utf-8) with HTTP 200 OK.
  */
 export async function getVoiceRecoveryMessageController(req: Request, res: Response): Promise<void> {
-  const query = req.query as Record<string, string | undefined>;
+  const startTime = Date.now();
+  const query = (req.query || {}) as Record<string, string | undefined>;
   const rawCustomField =
     query.CustomField ||
     query.customfield ||
     query.customField ||
     query.incidentId ||
     query.incident_id ||
-    query.id;
+    query.id ||
+    (typeof req.body?.CustomField === "string" ? req.body.CustomField : undefined);
 
-  if (!rawCustomField || typeof rawCustomField !== "string" || !rawCustomField.trim()) {
-    res
-      .status(404)
-      .set("Content-Type", "text/plain; charset=utf-8")
-      .set("Cache-Control", "no-store, no-cache, must-revalidate")
-      .send("Incident not found: Missing required CustomField query parameter.");
+  const callSid = query.CallSid || query.call_sid || query.Sid || query.sid || "N/A";
+  const callerFrom = query.From || query.from || "N/A";
+  const callerTo = query.To || query.to || "N/A";
+
+  console.info(`[Voice Controller] 📞 Incoming Exotel Passthru Request [${req.method}]`);
+  console.info(`[Voice Controller] ├─ Call SID: ${callSid}`);
+  console.info(`[Voice Controller] ├─ From: ${callerFrom} -> To: ${callerTo}`);
+  console.info(`[Voice Controller] └─ CustomField: "${rawCustomField || "UNSPECIFIED"}"`);
+
+  if (req.method === "HEAD") {
+    console.info(`[Voice Controller] ⚡ Handled Exotel HEAD validation probe in ${Date.now() - startTime}ms -> HTTP 200 OK`);
+    res.status(200).set("Content-Type", "text/plain; charset=utf-8").end();
     return;
   }
 
-  const cleanCustomField = rawCustomField.trim();
-  const { incident, script } = await getOrGenerateVoiceRecoveryMessage(cleanCustomField);
-
-  if (!incident || !script) {
-    res
-      .status(404)
-      .set("Content-Type", "text/plain; charset=utf-8")
-      .set("Cache-Control", "no-store, no-cache, must-revalidate")
-      .send(`Incident not found for provided CustomField: ${cleanCustomField}`);
-    return;
-  }
+  const cleanCustomField = (rawCustomField || "").trim();
+  const { incident, script, source } = await getOrGenerateVoiceRecoveryMessage(cleanCustomField);
+  const elapsedMs = Date.now() - startTime;
 
   const textBuffer = Buffer.from(script, "utf8");
 
@@ -51,10 +51,12 @@ export async function getVoiceRecoveryMessageController(req: Request, res: Respo
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
 
-  if (req.method === "HEAD") {
-    res.status(200).end();
-    return;
-  }
+  console.info(`[Voice Controller] ✅ Delivering Voice Script to Exotel in ${elapsedMs}ms`);
+  console.info(`[Voice Controller] ├─ Incident: ${incident?.id || "None"} (${incident?.customerName || "Customer"})`);
+  console.info(`[Voice Controller] ├─ Source: ${source}`);
+  console.info(`[Voice Controller] ├─ Script Length: ${script.length} characters`);
+  console.info(`[Voice Controller] ├─ Spoken Text: "${script}"`);
+  console.info(`[Voice Controller] └─ Response Status: HTTP 200 OK`);
 
   res.status(200).send(script);
 }

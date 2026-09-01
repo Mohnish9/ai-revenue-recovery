@@ -28,6 +28,9 @@ export interface VoiceRecoveryIncidentData {
 
 
 
+// Global fast-response cache for voice scripts to guarantee sub-50ms latency for Exotel Passthru
+export const voiceScriptCache = new Map<string, { script: string; timestamp: number; incidentId: string; source: string }>();
+
 /**
  * Locate incident across in-memory sandbox and persistent database tables.
  * Returns null if not found (strictly avoids selecting wrong incident).
@@ -212,7 +215,8 @@ export function generateFallbackVoiceScript(incident: VoiceRecoveryIncidentData)
  * Formulates a tailored, contextual, ~20-30 second spoken script in natural Indian English / Hinglish.
  */
 export async function generateGeminiVoiceRecoveryScript(
-  incident: VoiceRecoveryIncidentData
+  incident: VoiceRecoveryIncidentData,
+  timeoutMs = 2500
 ): Promise<{ script: string; source: "GEMINI_AI" | "RULE_ENGINE"; modelUsed?: string }> {
   const prompt = `You are Recoverly's dynamic autonomous voice recovery agent calling a valued customer on the phone regarding an interrupted transaction.
 
@@ -234,41 +238,120 @@ TASK & CONSTRAINTS:
 5. DO NOT include markdown, asterisks, brackets, quotations, or stage instructions (no "[Pause]", no "**Hello**", no markdown).
 6. DO NOT use generic or robotic phrasing.`;
 
-  const aiGen = await generateContentResilient({
-    contents: prompt,
-    temperature: 0.3,
-    systemInstruction:
-      "You are an empathetic, professional fintech voice recovery caller. Return ONLY spoken plain text suitable for phone text-to-speech with no markdown formatting.",
-  });
+  console.info(`[Voice Service] 🤖 Requesting Gemini voice script for incident "${incident.id}" (Customer: ${incident.customerName})...`);
+  const startTime = Date.now();
 
-  if (aiGen && aiGen.text) {
-    let text = aiGen.text.trim();
-    text = text.replace(/[*#_`]/g, "").replace(/^["']|["']$/g, "").trim();
-    if (text.length > 20) {
-      return { script: text, source: "GEMINI_AI", modelUsed: aiGen.modelUsed };
+  try {
+    // Race Gemini against timeout to guarantee Exotel synchronous Passthru never times out
+    const timeoutPromise = new Promise<{ text: string; modelUsed: string } | null>((resolve) =>
+      setTimeout(() => {
+        console.warn(`[Voice Service] ⏱️ Gemini generation exceeded ${timeoutMs}ms limit. Falling back to rule engine script.`);
+        resolve(null);
+      }, timeoutMs)
+    );
+
+    const geminiPromise = generateContentResilient({
+      contents: prompt,
+      temperature: 0.3,
+      systemInstruction:
+        "You are an empathetic, professional fintech voice recovery caller. Return ONLY spoken plain text suitable for phone text-to-speech with no markdown formatting.",
+    });
+
+    const aiGen = await Promise.race([geminiPromise, timeoutPromise]);
+    const duration = Date.now() - startTime;
+
+    if (aiGen && aiGen.text) {
+      let text = aiGen.text.trim();
+      text = text.replace(/[*#_`]/g, "").replace(/^["']|["']$/g, "").trim();
+      if (text.length > 20) {
+        console.info(`[Voice Service] ✅ Gemini voice script generated in ${duration}ms via ${aiGen.modelUsed}: "${text.slice(0, 80)}..."`);
+        return { script: text, source: "GEMINI_AI", modelUsed: aiGen.modelUsed };
+      }
     }
+  } catch (err: any) {
+    console.warn(`[Voice Service] Gemini generation error (${Date.now() - startTime}ms):`, err?.message || err);
   }
 
   // Graceful fallback to deterministic high-quality script
   const fallback = generateFallbackVoiceScript(incident);
+  console.info(`[Voice Service] ⚡ Using rule engine fallback script: "${fallback.slice(0, 80)}..."`);
   return { script: fallback, source: "RULE_ENGINE" };
 }
 
 /**
- * Generates and persists the voice recovery message for Exotel.
+ * Generates or retrieves the cached voice recovery message for Exotel Passthru.
+ * Guaranteed to return a valid spoken script (never empty) and respond in sub-50ms if cached.
  */
 export async function getOrGenerateVoiceRecoveryMessage(
   rawCustomField: string
-): Promise<{ incident: VoiceRecoveryIncidentData | null; script: string; source: string }> {
-  const incident = await findIncidentForVoiceRecovery(rawCustomField);
-  if (!incident) {
-    return { incident: null, script: "", source: "NONE" };
+): Promise<{ incident: VoiceRecoveryIncidentData; script: string; source: string }> {
+  const cleanId = (rawCustomField || "").trim();
+
+  // 1. Check in-memory fast cache first
+  if (cleanId && voiceScriptCache.has(cleanId)) {
+    const cached = voiceScriptCache.get(cleanId)!;
+    console.info(`[Voice Service] ⚡ Fast cache HIT for "${cleanId}" (Generated ${(Date.now() - cached.timestamp) / 1000}s ago, Source: ${cached.source})`);
+    
+    // Find incident metadata for audit logging if possible
+    const incident = (await findIncidentForVoiceRecovery(cleanId)) || {
+      id: cleanId,
+      customerName: "Valued Customer",
+      customerEmail: "",
+      amount: 0,
+      currency: "INR",
+      failureReason: "Payment processing interruption",
+    };
+
+    return { incident, script: cached.script, source: `CACHE_${cached.source}` };
   }
 
-  const { script, source, modelUsed } = await generateGeminiVoiceRecoveryScript(incident);
+  // 2. Locate incident
+  const incident = cleanId ? await findIncidentForVoiceRecovery(cleanId) : null;
 
-  // Persist generated voice script with the incident for auditability
+  if (!incident) {
+    // If CustomField is missing or not found in database, provide a polite universal recovery speech
+    // so Exotel NEVER receives a 404 error and never drops the customer's call abruptly.
+    console.warn(`[Voice Service] Incident lookup returned null for CustomField "${cleanId}". Providing universal fallback recovery script.`);
+    const universalScript = "Hello. This is Recoverly payment support regarding your recent transaction. We noticed your payment could not be processed. Please check your registered email or SMS to complete your payment securely. Thank you.";
+    
+    return {
+      incident: {
+        id: cleanId || "fallback_incident",
+        customerName: "Customer",
+        customerEmail: "",
+        amount: 0,
+        currency: "INR",
+        failureReason: "Payment processing interruption",
+      },
+      script: universalScript,
+      source: "UNIVERSAL_FALLBACK",
+    };
+  }
+
+  // 3. Check sandbox incident cached script
   const sbIncident = persistentSandboxIncidents.get(incident.id);
+  if (sbIncident?.last_voice_script && sbIncident.last_voice_script.length > 20) {
+    console.info(`[Voice Service] ⚡ Sandbox incident cache HIT for "${incident.id}"`);
+    voiceScriptCache.set(incident.id, {
+      script: sbIncident.last_voice_script,
+      timestamp: Date.now(),
+      incidentId: incident.id,
+      source: "SANDBOX_CACHE",
+    });
+    return { incident, script: sbIncident.last_voice_script, source: "SANDBOX_CACHE" };
+  }
+
+  // 4. Generate voice script via Gemini (with 2.5s timeout)
+  const { script, source, modelUsed } = await generateGeminiVoiceRecoveryScript(incident, 2500);
+
+  // Cache generated script for instant subsequent accesses
+  voiceScriptCache.set(incident.id, {
+    script,
+    timestamp: Date.now(),
+    incidentId: incident.id,
+    source,
+  });
+
   if (sbIncident) {
     sbIncident.last_voice_script = script;
     sbIncident.last_voice_script_at = new Date().toISOString();
@@ -422,6 +505,15 @@ export async function dispatchExotelVoiceCall(
   try {
     const scriptRes = await generateGeminiVoiceRecoveryScript(incident);
     scriptPreview = scriptRes.script;
+    
+    // Store in global fast memory cache for instant Exotel Passthru retrieval
+    voiceScriptCache.set(incident.id, {
+      script: scriptPreview,
+      timestamp: Date.now(),
+      incidentId: incident.id,
+      source: scriptRes.source,
+    });
+
     const sbIncident = persistentSandboxIncidents.get(incident.id);
     if (sbIncident) {
       sbIncident.last_voice_script = scriptPreview;
