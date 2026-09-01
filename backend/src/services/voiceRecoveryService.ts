@@ -1,5 +1,5 @@
 import { getSupabaseClient } from "./supabaseService.js";
-import { GoogleGenAI } from "@google/genai";
+import { generateContentResilient } from "./geminiService.js";
 import {
   persistentSandboxIncidents,
   StoredSandboxIncident,
@@ -26,36 +26,7 @@ export interface VoiceRecoveryIncidentData {
   analysis?: any;
 }
 
-// Gemini AI Client Instance
-let genAIInstance: GoogleGenAI | null = null;
-let lastUsedApiKey = "";
 
-function getGenAI(): GoogleGenAI | null {
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.API_KEY || "").trim();
-  if (!apiKey || apiKey === "undefined" || apiKey === "null") {
-    return null;
-  }
-
-  if (!genAIInstance || lastUsedApiKey !== apiKey) {
-    try {
-      genAIInstance = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build",
-          },
-        },
-      });
-      lastUsedApiKey = apiKey;
-    } catch (err: any) {
-      console.warn("[Voice Gemini] Failed to initialize GoogleGenAI client:", err);
-      return null;
-    }
-  }
-  return genAIInstance;
-}
-
-const GEMINI_VOICE_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash"];
 
 /**
  * Locate incident across in-memory sandbox and persistent database tables.
@@ -87,6 +58,8 @@ export async function findIncidentForVoiceRecovery(
     }
   }
 
+  const frontendBaseUrl = (process.env.FRONTEND_URL || "http://localhost:3000").replace(/\/+$/, "");
+
   if (sbIncident) {
     const analysis = sbIncident.analysis || {};
     return {
@@ -99,7 +72,7 @@ export async function findIncidentForVoiceRecovery(
       failureReason: sbIncident.failure_reason || "Payment processing failure",
       scenarioTypeName: sbIncident.scenario_type_name,
       paymentMethod: sbIncident.payment_method,
-      paymentUrl: `https://pay.recoverly.test/resolve/${sbIncident.id}`,
+      paymentUrl: `${frontendBaseUrl}/resolve/${sbIncident.id}`,
       rootCause: analysis.rootCause || sbIncident.failure_reason,
       selectedStrategy: analysis.selectedStrategy,
       recommendedAction: analysis.recommendedAction,
@@ -130,7 +103,7 @@ export async function findIncidentForVoiceRecovery(
         currency: caseData.currency || "INR",
         failureReason: caseData.reason || "Payment decline",
         scenarioTypeName: caseData.case_type,
-        paymentUrl: `https://pay.recoverly.test/resolve/${caseData.id}`,
+        paymentUrl: `${frontendBaseUrl}/resolve/${caseData.id}`,
         rootCause: caseData.reason,
         status: caseData.status,
       };
@@ -156,7 +129,7 @@ export async function findIncidentForVoiceRecovery(
         failureReason: dbSbData.failure_reason || "Payment issue",
         scenarioTypeName: dbSbData.scenario_type,
         paymentMethod: dbSbData.payment_method,
-        paymentUrl: `https://pay.recoverly.test/resolve/${dbSbData.id}`,
+        paymentUrl: `${frontendBaseUrl}/resolve/${dbSbData.id}`,
         rootCause: analysis.rootCause || dbSbData.failure_reason,
         selectedStrategy: analysis.selectedStrategy,
         recommendedAction: analysis.recommendedAction,
@@ -241,13 +214,6 @@ export function generateFallbackVoiceScript(incident: VoiceRecoveryIncidentData)
 export async function generateGeminiVoiceRecoveryScript(
   incident: VoiceRecoveryIncidentData
 ): Promise<{ script: string; source: "GEMINI_AI" | "RULE_ENGINE"; modelUsed?: string }> {
-  const ai = getGenAI();
-
-  if (!ai) {
-    const fallback = generateFallbackVoiceScript(incident);
-    return { script: fallback, source: "RULE_ENGINE" };
-  }
-
   const prompt = `You are Recoverly's dynamic autonomous voice recovery agent calling a valued customer on the phone regarding an interrupted transaction.
 
 INCIDENT GROUNDING DATA:
@@ -268,34 +234,22 @@ TASK & CONSTRAINTS:
 5. DO NOT include markdown, asterisks, brackets, quotations, or stage instructions (no "[Pause]", no "**Hello**", no markdown).
 6. DO NOT use generic or robotic phrasing.`;
 
-  for (const model of GEMINI_VOICE_MODELS) {
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          temperature: 0.3,
-          maxOutputTokens: 150,
-          systemInstruction:
-            "You are an empathetic, professional fintech voice recovery caller. Return ONLY spoken plain text suitable for phone text-to-speech with no markdown formatting.",
-        },
-      });
+  const aiGen = await generateContentResilient({
+    contents: prompt,
+    temperature: 0.3,
+    systemInstruction:
+      "You are an empathetic, professional fintech voice recovery caller. Return ONLY spoken plain text suitable for phone text-to-speech with no markdown formatting.",
+  });
 
-      let text = (response.text || "").trim();
-      // Clean any accidental markdown or quotes
-      text = text.replace(/[*#_`]/g, "").replace(/^["']|["']$/g, "").trim();
-
-      if (text && text.length > 20) {
-        console.info(`[Voice Gemini] Generated personalized script for ${incident.id} using ${model} (${text.length} chars)`);
-        return { script: text, source: "GEMINI_AI", modelUsed: model };
-      }
-    } catch (err: any) {
-      console.warn(`[Voice Gemini] Attempt with ${model} encountered an issue:`, err?.message);
+  if (aiGen && aiGen.text) {
+    let text = aiGen.text.trim();
+    text = text.replace(/[*#_`]/g, "").replace(/^["']|["']$/g, "").trim();
+    if (text.length > 20) {
+      return { script: text, source: "GEMINI_AI", modelUsed: aiGen.modelUsed };
     }
   }
 
   // Graceful fallback to deterministic high-quality script
-  console.info(`[Voice Gemini] Using resilient fallback rule generator for ${incident.id}`);
   const fallback = generateFallbackVoiceScript(incident);
   return { script: fallback, source: "RULE_ENGINE" };
 }
@@ -375,42 +329,8 @@ export async function dispatchExotelVoiceCall(
   options?: { targetPhoneOverride?: string; skipActionPush?: boolean }
 ): Promise<ExotelCallResult> {
   const now = new Date().toISOString();
-  const exotelApiKey = process.env.EXOTEL_API_KEY?.trim();
-  const exotelApiToken = process.env.EXOTEL_API_TOKEN?.trim();
-  const exotelSid = process.env.EXOTEL_SID?.trim();
-  const exotelExoPhone = process.env.EXOTEL_EXOPHONE?.trim();
-  const exotelAppId = process.env.EXOTEL_APP_ID?.trim() || (process.env as any).EXOTEL_FLOW_ID?.trim();
 
-  // Validate credentials existence
-  if (!exotelApiKey || !exotelApiToken || !exotelSid || !exotelExoPhone) {
-    const missingKeys: string[] = [];
-    if (!exotelApiKey) missingKeys.push("EXOTEL_API_KEY");
-    if (!exotelApiToken) missingKeys.push("EXOTEL_API_TOKEN");
-    if (!exotelSid) missingKeys.push("EXOTEL_SID");
-    if (!exotelExoPhone) missingKeys.push("EXOTEL_EXOPHONE");
-
-    const errorMsg = `Exotel configuration missing required environment variables: ${missingKeys.join(", ")}. Please configure these in server environment variables.`;
-    console.warn(`[Exotel Voice] Dispatch aborted: ${errorMsg}`);
-
-    return {
-      success: false,
-      channel: "VOICE",
-      provider: "EXOTEL",
-      deliveryMode: "FAILED",
-      status: "FAILED",
-      destination: "[Missing Configuration]",
-      actualDestination: "[Missing Configuration]",
-      deliveryLabel: `Voice Call Failed (${missingKeys.join(", ")} missing)`,
-      error: errorMsg,
-      errorCode: "MISSING_EXOTEL_CREDENTIALS",
-      errorMessage: errorMsg,
-      providerErrorCode: "MISSING_EXOTEL_CREDENTIALS",
-      providerErrorMessage: errorMsg,
-      dispatchedAt: now,
-    };
-  }
-
-  // Find incident
+  // 1. Find incident
   const incident = await findIncidentForVoiceRecovery(incidentId);
   if (!incident) {
     const errorMsg = `Incident "${incidentId}" not found in database. Cannot initiate voice call.`;
@@ -432,32 +352,70 @@ export async function dispatchExotelVoiceCall(
     };
   }
 
-  const rawPhone = options?.targetPhoneOverride?.trim() || incident.customerPhone?.trim() || "";
-  const demoContact = getDemoTestContactConfig();
-  const shouldUseTestContact = Boolean(demoContact.enabled && demoContact.verifiedPhone);
+  const rawPhone = (options?.targetPhoneOverride || incident.customerPhone || "").trim();
+  const normalizedCustomerPhone = normalizeToE164(rawPhone);
+  const verifiedPhoneEnv = (process.env.EXOTEL_VERIFIED_TO || process.env.EXOTEL_TEST_PHONE || process.env.DEMO_TEST_PHONE || "").trim();
+  const normalizedVerifiedPhone = normalizeToE164(verifiedPhoneEnv);
 
-  const targetPhoneRaw = shouldUseTestContact ? demoContact.verifiedPhone : rawPhone;
-  const targetPhone = normalizeToE164(targetPhoneRaw);
+  // 2. VERIFIED PHONE ALLOWLIST CHECK: customer phone must strictly equal EXOTEL_VERIFIED_TO
+  if (!normalizedCustomerPhone || !normalizedVerifiedPhone || normalizedCustomerPhone !== normalizedVerifiedPhone) {
+    const errorMsg = `Customer phone "${rawPhone || "None"}" does not match verified allowlist (EXOTEL_VERIFIED_TO: "${verifiedPhoneEnv || "NOT_CONFIGURED"}"). Voice call dispatch blocked.`;
+    console.warn(`[Exotel Voice] Blocked unverified destination: ${errorMsg}`);
 
-  if (!targetPhone) {
-    const errorMsg = `No valid destination phone number provided for ${shouldUseTestContact ? "Demo Contact" : `customer "${incident.customerName}"`}.`;
     return {
       success: false,
       channel: "VOICE",
       provider: "EXOTEL",
       deliveryMode: "FAILED",
       status: "FAILED",
-      destination: targetPhoneRaw || "[Missing Phone]",
-      actualDestination: targetPhoneRaw || "[Missing Phone]",
-      deliveryLabel: "Voice Call Failed (Missing Phone Number)",
+      destination: rawPhone || "[Missing Phone]",
+      actualDestination: rawPhone || "[Missing Phone]",
+      deliveryLabel: "Voice Call Failed (Destination Not Verified)",
       error: errorMsg,
-      errorCode: "INVALID_PHONE",
+      errorCode: "VOICE_DESTINATION_NOT_VERIFIED",
       errorMessage: errorMsg,
-      providerErrorCode: "INVALID_PHONE",
+      providerErrorCode: "VOICE_DESTINATION_NOT_VERIFIED",
       providerErrorMessage: errorMsg,
       dispatchedAt: now,
     };
   }
+
+  // 3. CHECK EXOTEL CREDENTIALS
+  const exotelApiKey = process.env.EXOTEL_API_KEY?.trim();
+  const exotelApiToken = process.env.EXOTEL_API_TOKEN?.trim();
+  const exotelSid = process.env.EXOTEL_SID?.trim();
+  const exotelExoPhone = process.env.EXOTEL_EXOPHONE?.trim();
+  const exotelAppId = process.env.EXOTEL_APP_ID?.trim() || (process.env as any).EXOTEL_FLOW_ID?.trim();
+
+  if (!exotelApiKey || !exotelApiToken || !exotelSid || !exotelExoPhone) {
+    const missingKeys: string[] = [];
+    if (!exotelApiKey) missingKeys.push("EXOTEL_API_KEY");
+    if (!exotelApiToken) missingKeys.push("EXOTEL_API_TOKEN");
+    if (!exotelSid) missingKeys.push("EXOTEL_SID");
+    if (!exotelExoPhone) missingKeys.push("EXOTEL_EXOPHONE");
+
+    const errorMsg = `Exotel configuration missing required environment variables: ${missingKeys.join(", ")}. Please configure these in server environment variables.`;
+    console.warn(`[Exotel Voice] Dispatch aborted: ${errorMsg}`);
+
+    return {
+      success: false,
+      channel: "VOICE",
+      provider: "EXOTEL",
+      deliveryMode: "FAILED",
+      status: "FAILED",
+      destination: rawPhone,
+      actualDestination: rawPhone,
+      deliveryLabel: `Voice Call Failed (${missingKeys.join(", ")} missing)`,
+      error: errorMsg,
+      errorCode: "MISSING_EXOTEL_CREDENTIALS",
+      errorMessage: errorMsg,
+      providerErrorCode: "MISSING_EXOTEL_CREDENTIALS",
+      providerErrorMessage: errorMsg,
+      dispatchedAt: now,
+    };
+  }
+
+  const targetPhone = normalizedCustomerPhone;
 
   // Pre-generate Gemini script so it is ready and audited
   let scriptPreview = "";
@@ -504,6 +462,7 @@ export async function dispatchExotelVoiceCall(
         Accept: "application/json",
       },
       body: formData.toString(),
+      signal: AbortSignal.timeout(10000),
     });
 
     const data = await response.json().catch(() => ({}));
@@ -528,7 +487,6 @@ export async function dispatchExotelVoiceCall(
             app_id: exotelAppId,
             status: "REQUESTED",
             provider_status: callStatus,
-            routed_to_demo_contact: shouldUseTestContact,
             voice_script_preview: scriptPreview.slice(0, 150),
           },
         });
@@ -570,11 +528,7 @@ export async function dispatchExotelVoiceCall(
         callSid,
         destination: targetPhone,
         actualDestination: targetPhone,
-        routedToTestContact: shouldUseTestContact,
-        testContactTarget: shouldUseTestContact ? targetPhone : undefined,
-        deliveryLabel: shouldUseTestContact
-          ? `Voice Call Requested via Exotel (Demo Contact: ${targetPhone})`
-          : `Voice Call Requested via Exotel (SID: ${callSid})`,
+        deliveryLabel: `Voice Call Requested via Exotel (SID: ${callSid})`,
         dispatchedAt: now,
         voiceScriptPreview: scriptPreview,
       };
@@ -610,8 +564,6 @@ export async function dispatchExotelVoiceCall(
         status: "FAILED",
         destination: targetPhone,
         actualDestination: targetPhone,
-        routedToTestContact: shouldUseTestContact,
-        testContactTarget: shouldUseTestContact ? targetPhone : undefined,
         deliveryLabel: `Voice Call Rejected by Exotel (${errorCode})`,
         error: errorMsg,
         errorCode,

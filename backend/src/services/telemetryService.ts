@@ -1,5 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
 import { getSupabaseClient } from "./supabaseService.js";
+import { generateContentResilient } from "./geminiService.js";
 import {
   createSandboxIncident,
   persistentSandboxIncidents,
@@ -176,7 +176,103 @@ function generateSyntheticTelemetryDataset(): {
   // 38-40: HIGH_CHURN_RISK
 
   const scenarioArchetypes = [
-    // 1-5: CHECKOUT_ABANDONMENT
+    // #01: HIGH_CHURN_RISK (Hardest: multi-source behavioral signals, zero gateway decline codes, sentiment & usage drop)
+    {
+      scenario: "HIGH_CHURN_RISK",
+      category: "RETENTION",
+      paymentMethod: "CARD",
+      paymentRail: "Recurring Annual Contract",
+      amountRange: [25000, 65000],
+      eventTemplates: (t: string, cust: any, amt: number) => [
+        { eventId: `ev-${t}-1`, timestamp: "2026-08-10T11:00:00Z", eventType: "ENGAGEMENT_DROP_DETECTED", source: "product_analytics", payload: { weekly_active_users_pct_change: -78.4, login_frequency_drop: "SEVERE" } },
+        { eventId: `ev-${t}-2`, timestamp: "2026-08-15T16:30:00Z", eventType: "SUPPORT_TICKET_ESCALATED", source: "zendesk_webhook", payload: { ticket_category: "INTEGRATION_FRUSTRATION", sentiment_score: -0.84, satisfaction: "UNSATISFIED" } },
+        { eventId: `ev-${t}-3`, timestamp: "2026-08-20T14:15:00Z", eventType: "CANCELLATION_PAGE_VIEWED", source: "app_telemetry", payload: { page_url: "/settings/subscription/cancel", export_data_requested: true } },
+        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T05:00:00Z", eventType: "UPCOMING_RENEWAL_ALERT", source: "retention_monitor", payload: { renewal_in_days: 7, estimated_churn_probability: 0.91 } },
+      ],
+      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ engagementHealthScore: "14/100 (CRITICAL)", exportHistory: "Data export performed 3 days ago" }),
+      histCtx: (_t: string, _cust: any, amt: number) => ({ tenureDays: 350, npsScore: 3, originalContractValue: amt }),
+    },
+    // #02: BANK_GATEWAY_TIMEOUT (Second hardest: downstream 504 socket timeout, inconclusive settlement state, double-debit inquiry)
+    {
+      scenario: "BANK_GATEWAY_TIMEOUT",
+      category: "NETBANKING",
+      paymentMethod: "NETBANKING",
+      paymentRail: "Direct Bank Gateway API",
+      amountRange: [6000, 35000],
+      eventTemplates: (t: string, cust: any, amt: number) => [
+        { eventId: `ev-${t}-1`, timestamp: "2026-08-23T06:05:00Z", eventType: "ORDER_CHECKOUT_SUBMITTED", source: "storefront", payload: { amount: amt, bank_code: "SBIN" } },
+        { eventId: `ev-${t}-2`, timestamp: "2026-08-23T06:05:02Z", eventType: "BANK_GATEWAY_HANDSHAKE_INITIATED", source: "psp_switch", payload: { destination_bank: "State Bank of India", protocol: "ISO8583" } },
+        { eventId: `ev-${t}-3`, timestamp: "2026-08-23T06:05:32Z", eventType: "BANK_GATEWAY_SOCKET_TIMEOUT", source: "psp_switch", payload: { socket_latency_ms: 30045, http_status: 504, connection_state: "DOWNSTREAM_TIMEOUT" } },
+        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T06:05:35Z", eventType: "TRANSACTION_STATUS_INCONCLUSIVE", source: "reconciliation_worker", payload: { psp_error_code: "GATEWAY_TIMEOUT_504", customer_debited_check: "PENDING_INQUIRY" } },
+      ],
+      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ acquirerSpikeAlert: "SBI Core Banking Network Degradation", responseLatencyMs: 30045 }),
+      histCtx: (_t: string, _cust: any, _amt: number) => ({ customerType: "Enterprise Buyer", orderFrequency: "Weekly" }),
+    },
+    // #03: SUBSCRIPTION_RENEWAL_FAILURE (Third hardest: ambiguous generic 'do_not_honor' decline resolved by active usage telemetry)
+    {
+      scenario: "SUBSCRIPTION_RENEWAL_FAILURE",
+      category: "RECURRING",
+      paymentMethod: "CARD",
+      paymentRail: "Recurring Auto-Debit / Token",
+      amountRange: [2999, 14999],
+      eventTemplates: (t: string, cust: any, amt: number) => [
+        { eventId: `ev-${t}-1`, timestamp: "2026-08-23T03:00:00Z", eventType: "SUBSCRIPTION_CYCLE_TRIGGERED", source: "saas_billing", payload: { plan_name: "Enterprise Growth Tier", billing_period: "2026-08-23_to_2026-09-23" } },
+        { eventId: `ev-${t}-2`, timestamp: "2026-08-23T03:00:04Z", eventType: "AUTO_DEBIT_ATTEMPT_FAILED", source: "stripe_adapter", payload: { error_type: "card_error", code: "do_not_honor", decline_type: "generic_decline" } },
+        { eventId: `ev-${t}-3`, timestamp: "2026-08-23T03:00:06Z", eventType: "DUNNING_SCHEDULED", source: "dunning_engine", payload: { dunning_stage: 1, max_grace_days: 7, service_status: "PROVISIONALLY_ACTIVE" } },
+        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T05:30:00Z", eventType: "SUB_USAGE_ACTIVE", source: "telemetry_collector", payload: { api_calls_today: 4120, active_seats: 18 } },
+      ],
+      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ planType: "Enterprise B2B SaaS", teamSeats: 18, criticalWorkloads: true }),
+      histCtx: (_t: string, _cust: any, amt: number) => ({ mrrValue: amt, subscriptionAgeMonths: 18, totalPaidToDate: amt * 18 }),
+    },
+    // #04: UPI_MANDATE_FAILURE (Fourth hardest: NPCI switch U19 remitter bank outage vs user revocation / mandate invalidation)
+    {
+      scenario: "UPI_MANDATE_FAILURE",
+      category: "UPI",
+      paymentMethod: "UPI",
+      paymentRail: "NPCI UPI AutoPay",
+      amountRange: [1499, 4999],
+      eventTemplates: (t: string, cust: any, amt: number) => [
+        { eventId: `ev-${t}-1`, timestamp: "2026-08-23T02:00:00Z", eventType: "MANDATE_EXECUTION_DISPATCHED", source: "autopay_scheduler", payload: { mandate_umn: `UMN${t}AUTOPAY892`, mandate_frequency: "MONTHLY" } },
+        { eventId: `ev-${t}-2`, timestamp: "2026-08-23T02:00:08Z", eventType: "NPCI_MANDATE_DEBIT_FAILED", source: "npci_switch", payload: { npci_response_code: "U19", error_description: "MANDATE_EXECUTION_FAILED_REMITTER_UNAVAILABLE" } },
+        { eventId: `ev-${t}-3`, timestamp: "2026-08-23T02:00:10Z", eventType: "MANDATE_STATUS_SUSPENDED_ATTEMPT", source: "mandate_registry", payload: { attempts_remaining: 2, vpa: cust.email.replace("@", ".") + "@okhdfcbank" } },
+      ],
+      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ mandateType: "UPI 2.0 Recurring Mandate", mandateMaxLimit: 15000 }),
+      histCtx: (_t: string, _cust: any, _amt: number) => ({ pastMandateSuccessCycles: 8, mandateCreatedDate: "2025-12-10" }),
+    },
+    // #05: 3DS_AUTHENTICATION_FAILURE (Fifth hardest: 5-step authentication lifecycle, ACS redirect & OTP challenge timeout)
+    {
+      scenario: "3DS_AUTHENTICATION_FAILURE",
+      category: "CARDS",
+      paymentMethod: "CARD",
+      paymentRail: "EMV 3-D Secure 2.2",
+      amountRange: [5000, 24000],
+      eventTemplates: (t: string, cust: any, amt: number) => [
+        { eventId: `ev-${t}-1`, timestamp: "2026-08-23T06:20:00Z", eventType: "CHECKOUT_COMPLETED_FORM", source: "web_checkout", payload: { amount: amt, card_bin: "411111" } },
+        { eventId: `ev-${t}-2`, timestamp: "2026-08-23T06:20:05Z", eventType: "3DS_CHALLENGE_REQUESTED", source: "mpi_server", payload: { three_ds_version: "2.2.0", challenge_method: "OTP_SMS" } },
+        { eventId: `ev-${t}-3`, timestamp: "2026-08-23T06:20:10Z", eventType: "ACS_REDIRECT_ISSUED", source: "issuer_acs", payload: { acs_url: "https://acs.bank.test/challenge", trans_status: "C" } },
+        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T06:25:12Z", eventType: "3DS_CHALLENGE_TIMEOUT", source: "mpi_server", payload: { elapsed_seconds: 302, error_code: "3DS_AUTH_TIMEOUT", otp_entered: false } },
+        { eventId: `ev-${t}-5`, timestamp: "2026-08-23T06:25:15Z", eventType: "TRANSACTION_TERMINATED_UNAUTHENTICATED", source: "gateway", payload: { status: "FAILED_3DS_CHALLENGE" } },
+      ],
+      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ browserFlow: "Redirect ACS Iframe", networkLatencyMs: 140, deviceFingerprint: "Valid" }),
+      histCtx: (_t: string, _cust: any, _amt: number) => ({ previousFraudRiskScore: 0.02, verifiedCustomer: true }),
+    },
+    // #06: OVERDUE_INVOICE (Sixth: multi-week corporate aging bucket escalation and accounts payable timeline)
+    {
+      scenario: "OVERDUE_INVOICE",
+      category: "B2B_INVOICE",
+      paymentMethod: "BANK_TRANSFER",
+      paymentRail: "NEFT / RTGS / Corporate Invoicing",
+      amountRange: [45000, 185000],
+      eventTemplates: (t: string, cust: any, amt: number) => [
+        { eventId: `ev-${t}-1`, timestamp: "2026-07-20T10:00:00Z", eventType: "INVOICE_ISSUED", source: "erp_billing", payload: { invoice_number: `INV-2026-${t}`, net_terms: 30, due_date: "2026-08-19" } },
+        { eventId: `ev-${t}-2`, timestamp: "2026-08-19T23:59:59Z", eventType: "INVOICE_DUE_DATE_PASSED", source: "ledger_monitor", payload: { invoice_amount: amt, overdue_days: 4, settlement_status: "UNPAID" } },
+        { eventId: `ev-${t}-3`, timestamp: "2026-08-21T09:00:00Z", eventType: "AUTOMATED_REMINDER_SENT", source: "ar_collections", payload: { delivery_channel: "EMAIL", opened: true, payment_received: false } },
+        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T06:00:00Z", eventType: "AGING_BUCKET_ESCALATION", source: "aging_report", payload: { aging_bracket: "1-30_DAYS_OVERDUE", high_value_flag: true } },
+      ],
+      sessionCtx: (t: string, cust: any, _amt: number) => ({ purchaseOrderNumber: `PO-GLOBAL-${t}`, billingContact: cust.name, financeDepartment: "Accounts Payable" }),
+      histCtx: (_t: string, _cust: any, amt: number) => ({ annualContractValue: amt * 12, previousPaymentDelayAvgDays: 6, clientCreditRating: "AAA" }),
+    },
+    // #07: CHECKOUT_ABANDONMENT (Seventh: 6-event storefront checkout funnel drop-off)
     {
       scenario: "CHECKOUT_ABANDONMENT",
       category: "CHECKOUT",
@@ -194,7 +290,7 @@ function generateSyntheticTelemetryDataset(): {
       sessionCtx: (_t: string, _cust: any, _amt: number) => ({ userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4)", utmSource: "re-engagement", dropoffStage: "PAYMENT_SELECTION" }),
       histCtx: (_t: string, _cust: any, _amt: number) => ({ previousOrders: 2, totalSpendToDate: 14500, customerLifetimeDays: 140 }),
     },
-    // 6-10: INSUFFICIENT_FUNDS
+    // #08: INSUFFICIENT_FUNDS (Eighth: explicit ISO-8583 soft decline code 51 with retry log)
     {
       scenario: "INSUFFICIENT_FUNDS",
       category: "CARDS",
@@ -211,7 +307,7 @@ function generateSyntheticTelemetryDataset(): {
       sessionCtx: (_t: string, _cust: any, _amt: number) => ({ billingCycle: "ANNUAL", dunningAttemptCount: 2, accountTier: "Professional" }),
       histCtx: (_t: string, _cust: any, _amt: number) => ({ consecutiveSuccessfulPayments: 11, tenureMonths: 12, chargebackCount: 0 }),
     },
-    // 11-15: EXPIRED_CARD
+    // #09: EXPIRED_CARD (Easiest: unambiguous card expiry date 07/26 and processor decline code 54)
     {
       scenario: "EXPIRED_CARD",
       category: "CARDS",
@@ -227,112 +323,16 @@ function generateSyntheticTelemetryDataset(): {
       sessionCtx: (_t: string, _cust: any, _amt: number) => ({ paymentInstrument: "Saved Card Token (Expired)", cardBrand: "Mastercard Platinum" }),
       histCtx: (_t: string, _cust: any, _amt: number) => ({ activeSince: "2024-08-01", totalLifetimeTransactions: 24, onTimePaymentRate: "100%" }),
     },
-    // 16-20: 3DS_AUTHENTICATION_FAILURE
-    {
-      scenario: "3DS_AUTHENTICATION_FAILURE",
-      category: "CARDS",
-      paymentMethod: "CARD",
-      paymentRail: "EMV 3-D Secure 2.2",
-      amountRange: [5000, 24000],
-      eventTemplates: (t: string, cust: any, amt: number) => [
-        { eventId: `ev-${t}-1`, timestamp: "2026-08-23T06:20:00Z", eventType: "CHECKOUT_COMPLETED_FORM", source: "web_checkout", payload: { amount: amt, card_bin: "411111" } },
-        { eventId: `ev-${t}-2`, timestamp: "2026-08-23T06:20:05Z", eventType: "3DS_CHALLENGE_REQUESTED", source: "mpi_server", payload: { three_ds_version: "2.2.0", challenge_method: "OTP_SMS" } },
-        { eventId: `ev-${t}-3`, timestamp: "2026-08-23T06:20:10Z", eventType: "ACS_REDIRECT_ISSUED", source: "issuer_acs", payload: { acs_url: "https://acs.bank.test/challenge", trans_status: "C" } },
-        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T06:25:12Z", eventType: "3DS_CHALLENGE_TIMEOUT", source: "mpi_server", payload: { elapsed_seconds: 302, error_code: "3DS_AUTH_TIMEOUT", otp_entered: false } },
-        { eventId: `ev-${t}-5`, timestamp: "2026-08-23T06:25:15Z", eventType: "TRANSACTION_TERMINATED_UNAUTHENTICATED", source: "gateway", payload: { status: "FAILED_3DS_CHALLENGE" } },
-      ],
-      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ browserFlow: "Redirect ACS Iframe", networkLatencyMs: 140, deviceFingerprint: "Valid" }),
-      histCtx: (_t: string, _cust: any, _amt: number) => ({ previousFraudRiskScore: 0.02, verifiedCustomer: true }),
-    },
-    // 21-25: BANK_GATEWAY_TIMEOUT
-    {
-      scenario: "BANK_GATEWAY_TIMEOUT",
-      category: "NETBANKING",
-      paymentMethod: "NETBANKING",
-      paymentRail: "Direct Bank Gateway API",
-      amountRange: [6000, 35000],
-      eventTemplates: (t: string, cust: any, amt: number) => [
-        { eventId: `ev-${t}-1`, timestamp: "2026-08-23T06:05:00Z", eventType: "ORDER_CHECKOUT_SUBMITTED", source: "storefront", payload: { amount: amt, bank_code: "SBIN" } },
-        { eventId: `ev-${t}-2`, timestamp: "2026-08-23T06:05:02Z", eventType: "BANK_GATEWAY_HANDSHAKE_INITIATED", source: "psp_switch", payload: { destination_bank: "State Bank of India", protocol: "ISO8583" } },
-        { eventId: `ev-${t}-3`, timestamp: "2026-08-23T06:05:32Z", eventType: "BANK_GATEWAY_SOCKET_TIMEOUT", source: "psp_switch", payload: { socket_latency_ms: 30045, http_status: 504, connection_state: "DOWNSTREAM_TIMEOUT" } },
-        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T06:05:35Z", eventType: "TRANSACTION_STATUS_INCONCLUSIVE", source: "reconciliation_worker", payload: { psp_error_code: "GATEWAY_TIMEOUT_504", customer_debited_check: "PENDING_INQUIRY" } },
-      ],
-      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ acquirerSpikeAlert: "SBI Core Banking Network Degradation", responseLatencyMs: 30045 }),
-      histCtx: (_t: string, _cust: any, _amt: number) => ({ customerType: "Enterprise Buyer", orderFrequency: "Weekly" }),
-    },
-    // 26-30: SUBSCRIPTION_RENEWAL_FAILURE
-    {
-      scenario: "SUBSCRIPTION_RENEWAL_FAILURE",
-      category: "RECURRING",
-      paymentMethod: "CARD",
-      paymentRail: "Recurring Auto-Debit / Token",
-      amountRange: [2999, 14999],
-      eventTemplates: (t: string, cust: any, amt: number) => [
-        { eventId: `ev-${t}-1`, timestamp: "2026-08-23T03:00:00Z", eventType: "SUBSCRIPTION_CYCLE_TRIGGERED", source: "saas_billing", payload: { plan_name: "Enterprise Growth Tier", billing_period: "2026-08-23_to_2026-09-23" } },
-        { eventId: `ev-${t}-2`, timestamp: "2026-08-23T03:00:04Z", eventType: "AUTO_DEBIT_ATTEMPT_FAILED", source: "stripe_adapter", payload: { error_type: "card_error", code: "do_not_honor", decline_type: "generic_decline" } },
-        { eventId: `ev-${t}-3`, timestamp: "2026-08-23T03:00:06Z", eventType: "DUNNING_SCHEDULED", source: "dunning_engine", payload: { dunning_stage: 1, max_grace_days: 7, service_status: "PROVISIONALLY_ACTIVE" } },
-        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T05:30:00Z", eventType: "SUB_USAGE_ACTIVE", source: "telemetry_collector", payload: { api_calls_today: 4120, active_seats: 18 } },
-      ],
-      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ planType: "Enterprise B2B SaaS", teamSeats: 18, criticalWorkloads: true }),
-      histCtx: (_t: string, _cust: any, amt: number) => ({ mrrValue: amt, subscriptionAgeMonths: 18, totalPaidToDate: amt * 18 }),
-    },
-    // 31-34: UPI_MANDATE_FAILURE
-    {
-      scenario: "UPI_MANDATE_FAILURE",
-      category: "UPI",
-      paymentMethod: "UPI",
-      paymentRail: "NPCI UPI AutoPay",
-      amountRange: [1499, 4999],
-      eventTemplates: (t: string, cust: any, amt: number) => [
-        { eventId: `ev-${t}-1`, timestamp: "2026-08-23T02:00:00Z", eventType: "MANDATE_EXECUTION_DISPATCHED", source: "autopay_scheduler", payload: { mandate_umn: `UMN${t}AUTOPAY892`, mandate_frequency: "MONTHLY" } },
-        { eventId: `ev-${t}-2`, timestamp: "2026-08-23T02:00:08Z", eventType: "NPCI_MANDATE_DEBIT_FAILED", source: "npci_switch", payload: { npci_response_code: "U19", error_description: "MANDATE_EXECUTION_FAILED_REMITTER_UNAVAILABLE" } },
-        { eventId: `ev-${t}-3`, timestamp: "2026-08-23T02:00:10Z", eventType: "MANDATE_STATUS_SUSPENDED_ATTEMPT", source: "mandate_registry", payload: { attempts_remaining: 2, vpa: cust.email.replace("@", ".") + "@okhdfcbank" } },
-      ],
-      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ mandateType: "UPI 2.0 Recurring Mandate", mandateMaxLimit: 15000 }),
-      histCtx: (_t: string, _cust: any, _amt: number) => ({ pastMandateSuccessCycles: 8, mandateCreatedDate: "2025-12-10" }),
-    },
-    // 35-37: OVERDUE_INVOICE
-    {
-      scenario: "OVERDUE_INVOICE",
-      category: "B2B_INVOICE",
-      paymentMethod: "BANK_TRANSFER",
-      paymentRail: "NEFT / RTGS / Corporate Invoicing",
-      amountRange: [45000, 185000],
-      eventTemplates: (t: string, cust: any, amt: number) => [
-        { eventId: `ev-${t}-1`, timestamp: "2026-07-20T10:00:00Z", eventType: "INVOICE_ISSUED", source: "erp_billing", payload: { invoice_number: `INV-2026-${t}`, net_terms: 30, due_date: "2026-08-19" } },
-        { eventId: `ev-${t}-2`, timestamp: "2026-08-19T23:59:59Z", eventType: "INVOICE_DUE_DATE_PASSED", source: "ledger_monitor", payload: { invoice_amount: amt, overdue_days: 4, settlement_status: "UNPAID" } },
-        { eventId: `ev-${t}-3`, timestamp: "2026-08-21T09:00:00Z", eventType: "AUTOMATED_REMINDER_SENT", source: "ar_collections", payload: { delivery_channel: "EMAIL", opened: true, payment_received: false } },
-        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T06:00:00Z", eventType: "AGING_BUCKET_ESCALATION", source: "aging_report", payload: { aging_bracket: "1-30_DAYS_OVERDUE", high_value_flag: true } },
-      ],
-      sessionCtx: (t: string, cust: any, _amt: number) => ({ purchaseOrderNumber: `PO-GLOBAL-${t}`, billingContact: cust.name, financeDepartment: "Accounts Payable" }),
-      histCtx: (_t: string, _cust: any, amt: number) => ({ annualContractValue: amt * 12, previousPaymentDelayAvgDays: 6, clientCreditRating: "AAA" }),
-    },
-    // 38-40: HIGH_CHURN_RISK
-    {
-      scenario: "HIGH_CHURN_RISK",
-      category: "RETENTION",
-      paymentMethod: "CARD",
-      paymentRail: "Recurring Annual Contract",
-      amountRange: [25000, 65000],
-      eventTemplates: (t: string, cust: any, amt: number) => [
-        { eventId: `ev-${t}-1`, timestamp: "2026-08-10T11:00:00Z", eventType: "ENGAGEMENT_DROP_DETECTED", source: "product_analytics", payload: { weekly_active_users_pct_change: -78.4, login_frequency_drop: "SEVERE" } },
-        { eventId: `ev-${t}-2`, timestamp: "2026-08-15T16:30:00Z", eventType: "SUPPORT_TICKET_ESCALATED", source: "zendesk_webhook", payload: { ticket_category: "INTEGRATION_FRUSTRATION", sentiment_score: -0.84, satisfaction: "UNSATISFIED" } },
-        { eventId: `ev-${t}-3`, timestamp: "2026-08-20T14:15:00Z", eventType: "CANCELLATION_PAGE_VIEWED", source: "app_telemetry", payload: { page_url: "/settings/subscription/cancel", export_data_requested: true } },
-        { eventId: `ev-${t}-4`, timestamp: "2026-08-23T05:00:00Z", eventType: "UPCOMING_RENEWAL_ALERT", source: "retention_monitor", payload: { renewal_in_days: 7, estimated_churn_probability: 0.91 } },
-      ],
-      sessionCtx: (_t: string, _cust: any, _amt: number) => ({ engagementHealthScore: "14/100 (CRITICAL)", exportHistory: "Data export performed 3 days ago" }),
-      histCtx: (_t: string, _cust: any, amt: number) => ({ tenureDays: 350, npsScore: 3, originalContractValue: amt }),
-    },
   ];
 
-  // Realistic, well-distributed archetype assignment across all 9 scenarios
-  // Ensures every scenario appears multiple times with no long consecutive repeats
+  // Strict AI difficulty order for first 9 scenarios (top 5 are hardest),
+  // followed by a clean rotation across all 9 archetypes for the remaining records (10 to 40)
   const archetypeOrder = [
-    0, 2, 7, 1, 8, 4, 6, 3, 5,
-    0, 1, 2, 3, 6, 5, 4, 7, 8,
-    1, 0, 4, 2, 5, 3, 6, 8, 7,
-    0, 5, 1, 4, 2, 6, 3, 7, 8,
-    0, 1, 3, 5
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3
   ];
 
   // Map 40 records to the archetypes
@@ -387,93 +387,62 @@ function generateSyntheticTelemetryDataset(): {
 
 // Initialize and seed demo dataset idempotently with full Supabase hydration
 export async function initializeTelemetryDemoQueue(): Promise<void> {
-  if (isQueueInitialized && memoryTelemetryRecords.size >= 40 && memoryAIAnalyses.size > 0) {
-    return;
-  }
-
   const dataset = generateSyntheticTelemetryDataset();
   for (const rec of dataset.records) {
-    if (!memoryTelemetryRecords.has(rec.id)) {
+    const existing = memoryTelemetryRecords.get(rec.id);
+    if (!existing) {
       memoryTelemetryRecords.set(rec.id, rec);
+    } else {
+      memoryTelemetryRecords.set(rec.id, {
+        ...rec,
+        status: existing.status,
+        createdIncidentId: existing.createdIncidentId,
+        demoOutreachContact: existing.demoOutreachContact,
+      });
     }
   }
   for (const gt of dataset.groundTruths) {
-    if (!memoryGroundTruth.has(gt.telemetryId)) {
-      memoryGroundTruth.set(gt.telemetryId, gt);
-    }
+    memoryGroundTruth.set(gt.telemetryId, gt);
   }
 
-  // Idempotently sync to Supabase database if connected
+  // Sync to Supabase database if connected
   const supabase = getSupabaseClient();
   try {
-    const { data: existing } = await supabase.from("synthetic_telemetry_records").select("id").limit(50);
-    if (!existing || existing.length < 40) {
-      // Upsert telemetry records
-      for (const rec of dataset.records) {
-        await supabase.from("synthetic_telemetry_records").upsert({
-          id: rec.id,
-          batch_number: rec.batchNumber,
-          title: rec.title,
-          customer_id: rec.customerId,
-          customer_name: rec.customerName,
-          customer_email: rec.customerEmail,
-          customer_phone: rec.customerPhone,
-          customer_type: rec.customerType,
-          amount: rec.amount,
-          currency: rec.currency,
-          payment_method: rec.paymentMethod,
-          payment_rail: rec.paymentRail,
-          events: rec.events,
-          session_context: rec.sessionContext,
-          historical_context: rec.historicalContext,
-          status: rec.status,
-          created_incident_id: rec.createdIncidentId,
-          created_at: rec.createdAt,
-          updated_at: rec.updatedAt,
-        }, { onConflict: "id" });
-      }
+    // Upsert telemetry records
+    for (const rec of dataset.records) {
+      await supabase.from("synthetic_telemetry_records").upsert({
+        id: rec.id,
+        batch_number: rec.batchNumber,
+        title: rec.title,
+        customer_id: rec.customerId,
+        customer_name: rec.customerName,
+        customer_email: rec.customerEmail,
+        customer_phone: rec.customerPhone,
+        customer_type: rec.customerType,
+        amount: rec.amount,
+        currency: rec.currency,
+        payment_method: rec.paymentMethod,
+        payment_rail: rec.paymentRail,
+        events: rec.events,
+        session_context: rec.sessionContext,
+        historical_context: rec.historicalContext,
+        status: rec.status,
+        created_incident_id: rec.createdIncidentId,
+        created_at: rec.createdAt,
+        updated_at: rec.updatedAt,
+      }, { onConflict: "id" });
+    }
 
-      // Upsert hidden ground truths
-      for (const gt of dataset.groundTruths) {
-        await supabase.from("telemetry_ground_truth").upsert({
-          id: gt.id,
-          telemetry_id: gt.telemetryId,
-          expected_scenario_type: gt.expectedScenarioType,
-          expected_category: gt.expectedCategory,
-          description: gt.description,
-          created_at: gt.createdAt,
-        }, { onConflict: "id" });
-      }
-    } else {
-      // Load existing state into memory
-      const { data: allRows } = await supabase.from("synthetic_telemetry_records").select("*");
-      if (allRows) {
-        for (const row of allRows) {
-          const rec: SyntheticTelemetryRecord = {
-            id: row.id,
-            batchNumber: row.batch_number,
-            title: row.title,
-            customerId: row.customer_id,
-            customerName: row.customer_name,
-            customerEmail: row.customer_email,
-            customerPhone: row.customer_phone,
-            customerType: row.customer_type,
-            amount: Number(row.amount),
-            currency: row.currency,
-            paymentMethod: row.payment_method,
-            paymentRail: row.payment_rail,
-            events: row.events || [],
-            sessionContext: row.session_context || {},
-            historicalContext: row.historical_context || {},
-            status: row.status,
-            createdIncidentId: row.created_incident_id,
-            demoOutreachContact: row.demo_outreach_contact,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-          };
-          memoryTelemetryRecords.set(rec.id, rec);
-        }
-      }
+    // Upsert hidden ground truths
+    for (const gt of dataset.groundTruths) {
+      await supabase.from("telemetry_ground_truth").upsert({
+        id: gt.id,
+        telemetry_id: gt.telemetryId,
+        expected_scenario_type: gt.expectedScenarioType,
+        expected_category: gt.expectedCategory,
+        description: gt.description,
+        created_at: gt.createdAt,
+      }, { onConflict: "id" });
     }
 
     // Hydrate AI Analyses from Supabase
@@ -1144,29 +1113,16 @@ Respond strictly in valid JSON matching this schema:
   let aiResult: any = null;
   let modelName = "gemini-3.7-flash";
 
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.API_KEY || "").trim();
-  if (apiKey && apiKey !== "undefined" && apiKey !== "null") {
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: observablePrompt,
-        config: {
-          responseMimeType: "application/json",
-          systemInstruction:
-            "You are an elite autonomous fintech revenue intelligence and payment telemetry detection AI specialist. Ground all classifications strictly in the observable event logs.",
-        },
-      });
+  const aiGen = await generateContentResilient({
+    contents: observablePrompt,
+    responseMimeType: "application/json",
+    systemInstruction:
+      "You are an elite autonomous fintech revenue intelligence and payment telemetry detection AI specialist. Ground all classifications strictly in the observable event logs.",
+  });
 
-      if (response.text) {
-        let clean = response.text.trim();
-        if (clean.startsWith("```json")) clean = clean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-        else if (clean.startsWith("```")) clean = clean.replace(/^```\s*/, "").replace(/\s*```$/, "");
-        aiResult = JSON.parse(clean);
-      }
-    } catch (err) {
-      console.warn("[TelemetryService] Gemini API call error, applying heuristic engine:", err);
-    }
+  if (aiGen && aiGen.json && aiGen.json.detectedScenarioType) {
+    aiResult = aiGen.json;
+    modelName = aiGen.modelUsed;
   }
 
   // Fallback to heuristic classification if Gemini key missing or call failed
@@ -1335,13 +1291,14 @@ Respond strictly in valid JSON matching this schema:
 
 // Reset demo queue to initial WAITING state for re-running judge demonstrations
 export async function resetTelemetryDemoQueue(): Promise<void> {
-  await initializeTelemetryDemoQueue();
-
-  for (const [id, rec] of memoryTelemetryRecords.entries()) {
-    rec.status = "WAITING";
-    rec.createdIncidentId = undefined;
-    rec.updatedAt = new Date().toISOString();
-    memoryTelemetryRecords.set(id, rec);
+  const dataset = generateSyntheticTelemetryDataset();
+  memoryTelemetryRecords.clear();
+  memoryGroundTruth.clear();
+  for (const rec of dataset.records) {
+    memoryTelemetryRecords.set(rec.id, rec);
+  }
+  for (const gt of dataset.groundTruths) {
+    memoryGroundTruth.set(gt.telemetryId, gt);
   }
 
   memoryAIAnalyses.clear();
@@ -1350,11 +1307,43 @@ export async function resetTelemetryDemoQueue(): Promise<void> {
 
   const supabase = getSupabaseClient();
   try {
-    await supabase.from("synthetic_telemetry_records").update({
-      status: "WAITING",
-      created_incident_id: null,
-      updated_at: new Date().toISOString(),
-    }).neq("id", "none");
+    for (const rec of dataset.records) {
+      await supabase.from("synthetic_telemetry_records").upsert({
+        id: rec.id,
+        batch_number: rec.batchNumber,
+        title: rec.title,
+        customer_id: rec.customerId,
+        customer_name: rec.customerName,
+        customer_email: rec.customerEmail,
+        customer_phone: rec.customerPhone,
+        customer_type: rec.customerType,
+        amount: rec.amount,
+        currency: rec.currency,
+        payment_method: rec.paymentMethod,
+        payment_rail: rec.paymentRail,
+        events: rec.events,
+        session_context: rec.sessionContext,
+        historical_context: rec.historicalContext,
+        status: "WAITING",
+        created_incident_id: null,
+        created_at: rec.createdAt,
+        updated_at: rec.updatedAt,
+      }, { onConflict: "id" });
+    }
+
+    for (const gt of dataset.groundTruths) {
+      await supabase.from("telemetry_ground_truth").upsert({
+        id: gt.id,
+        telemetry_id: gt.telemetryId,
+        expected_scenario_type: gt.expectedScenarioType,
+        expected_category: gt.expectedCategory,
+        description: gt.description,
+        created_at: gt.createdAt,
+      }, { onConflict: "id" });
+    }
+
+    await supabase.from("telemetry_ai_analyses").delete().neq("id", "none");
+    await supabase.from("detection_evaluations").delete().neq("id", "none");
   } catch (e) {
     // Non-blocking
   }

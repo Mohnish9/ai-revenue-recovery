@@ -60,7 +60,7 @@ export async function meController(req: AuthenticatedRequest, res: Response) {
     const user = await verifyTokenAndGetUser(token);
     return res.json({ user });
   } catch (error: any) {
-    console.warn(`[Auth Error] Session token verification failed:`, error.message || error);
+    console.log(`[Auth] Session check: ${error.message || "Invalid or expired session"}`);
     return res.status(401).json({ error: error.message || "Session invalid" });
   }
 }

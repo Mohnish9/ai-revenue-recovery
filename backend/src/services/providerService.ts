@@ -76,6 +76,9 @@ export function getDetailedChannelReadiness(
   const rawPhone = (shouldUseTestContact && demoContact.verifiedPhone ? demoContact.verifiedPhone : recipientPhone)?.trim() || "";
   const targetPhone = rawPhone ? normalizeToE164(rawPhone) : "";
 
+  const verifiedEmail = (process.env.RESEND_TEST_EMAIL || process.env.DEMO_TEST_EMAIL || "").trim().toLowerCase();
+  const verifiedPhone = (process.env.EXOTEL_VERIFIED_TO || process.env.EXOTEL_TEST_PHONE || process.env.DEMO_TEST_PHONE || "").trim();
+
   // 1. Email Readiness Evaluation (Resend)
   let emailStatus: "READY" | "RESTRICTED" | "FAILED" | "UNCONFIGURED" = "UNCONFIGURED";
   let emailDeliveryLabel = "Email Unconfigured";
@@ -90,26 +93,20 @@ export function getDetailedChannelReadiness(
     emailStatus = "FAILED";
     emailDeliveryLabel = "Email Missing";
     emailDetails = "Recipient email address was not provided on this contact.";
-  } else if (isResendTestingDomain) {
-    const devTestEmail = (demoContact.verifiedEmail || demoContact.testEmail || process.env.RESEND_TEST_EMAIL || process.env.DEMO_TEST_EMAIL || "").trim().toLowerCase();
-    const isMatchedTestEmail = devTestEmail && targetEmail.toLowerCase() === devTestEmail;
+  } else {
+    const isMatchedTestEmail = Boolean(verifiedEmail && targetEmail.toLowerCase() === verifiedEmail);
 
-    if (isMatchedTestEmail || (shouldUseTestContact && devTestEmail)) {
+    if (isMatchedTestEmail) {
       emailStatus = "READY";
-      emailDeliveryLabel = "Email Ready (Authorized Testing Address)";
-      emailDetails = `Recipient matches configured development test address (${targetEmail || devTestEmail}).`;
+      emailDeliveryLabel = `Email Ready (Verified Destination: ${targetEmail})`;
+      emailDetails = `Recipient matches configured verified test address (${targetEmail}). Outbound Resend dispatch will proceed.`;
       isDeliverableToRecipient = true;
     } else {
       emailStatus = "RESTRICTED";
-      emailDeliveryLabel = "EMAIL RESTRICTED — TEST SENDER (onboarding@resend.dev)";
-      emailDetails = `Sender is set to onboarding@resend.dev. Resend testing sender can only deliver to the account owner's registered testing address. To deliver to customer email (${targetEmail}), please configure and verify a custom sender domain in Resend or enable Demo Test Contact.`;
+      emailDeliveryLabel = "Email Destination Not Verified (EMAIL_DESTINATION_NOT_VERIFIED)";
+      emailDetails = `Customer email (${targetEmail}) does not match verified allowlist (RESEND_TEST_EMAIL: "${verifiedEmail || "NOT_CONFIGURED"}"). Email dispatch will fail with EMAIL_DESTINATION_NOT_VERIFIED.`;
       isDeliverableToRecipient = false;
     }
-  } else {
-    emailStatus = "READY";
-    emailDeliveryLabel = `Email Ready (${configuredSender})`;
-    emailDetails = `Verified custom sender domain active. Outbound delivery to ${targetEmail} is supported.`;
-    isDeliverableToRecipient = true;
   }
 
   // 2. Voice Readiness Evaluation (Exotel)
@@ -134,9 +131,16 @@ export function getDetailedChannelReadiness(
     voiceDeliveryLabel = "Voice Call Failed (Missing Phone Number)";
     voiceDetails = "Customer destination phone number is missing.";
   } else {
-    voiceStatus = "READY";
-    voiceDeliveryLabel = `Voice Ready (Caller ID: ${exotelExoPhone})`;
-    voiceDetails = `Exotel outbound transactional voice calls active for ${targetPhone} via Caller ID ${exotelExoPhone}.`;
+    const isMatchedPhone = Boolean(verifiedPhone && normalizeToE164(targetPhone) === normalizeToE164(verifiedPhone));
+    if (isMatchedPhone) {
+      voiceStatus = "READY";
+      voiceDeliveryLabel = `Voice Ready (Verified Destination: ${targetPhone})`;
+      voiceDetails = `Customer phone matches verified test allowlist (EXOTEL_VERIFIED_TO: ${verifiedPhone}). Outbound calls enabled.`;
+    } else {
+      voiceStatus = "FAILED";
+      voiceDeliveryLabel = "Voice Destination Not Verified (VOICE_DESTINATION_NOT_VERIFIED)";
+      voiceDetails = `Customer phone (${targetPhone}) does not match verified allowlist (EXOTEL_VERIFIED_TO: "${verifiedPhone || "NOT_CONFIGURED"}"). Voice dispatch will fail with VOICE_DESTINATION_NOT_VERIFIED.`;
+    }
   }
 
   const preflightPassed = emailStatus === "READY" || voiceStatus === "READY";

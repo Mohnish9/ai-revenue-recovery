@@ -566,65 +566,28 @@ export async function sendEmailMessage(params: {
   incidentId: string;
   paymentUrl?: string;
 }): Promise<OutboundDeliveryResult> {
-  const resendApiKey = process.env.RESEND_API_KEY?.trim();
-  const emailFrom = process.env.EMAIL_FROM?.trim() || "onboarding@resend.dev";
-  const isResendTestingDomain = emailFrom.toLowerCase().includes("onboarding@resend.dev") || emailFrom.toLowerCase().endsWith("@resend.dev");
-  const rawDestination = params.toEmail?.trim() || "";
+  const rawCustomerEmail = (params.toEmail || "").trim();
+  const customerEmail = rawCustomerEmail.toLowerCase();
+  const verifiedEmail = (process.env.RESEND_TEST_EMAIL || process.env.DEMO_TEST_EMAIL || "").trim().toLowerCase();
   const now = new Date().toISOString();
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const isCustomerEmailValid = Boolean(rawDestination && emailRegex.test(rawDestination));
+  // 1. VERIFIED EMAIL ALLOWLIST CHECK: customer email must strictly equal RESEND_TEST_EMAIL
+  if (!customerEmail || !verifiedEmail || customerEmail !== verifiedEmail) {
+    const errorMsg = `Customer email "${rawCustomerEmail || "None"}" does not match verified allowlist (RESEND_TEST_EMAIL: "${verifiedEmail || "NOT_CONFIGURED"}"). Outbound email dispatch blocked.`;
+    console.warn(`[Email Dispatch] Blocked unverified destination: ${errorMsg}`);
 
-  const demoContact = getDemoTestContactConfig();
-  const fallbackTestEmail = (demoContact.verifiedEmail || demoContact.testEmail || process.env.RESEND_TEST_EMAIL || process.env.DEMO_TEST_EMAIL || "").trim();
-  const isDemoEmailValid = Boolean(fallbackTestEmail && emailRegex.test(fallbackTestEmail));
-  
-  // Use test contact if explicitly enabled OR if Resend is in testing domain mode and customer email is not the test email
-  const shouldUseTestContact = Boolean(
-    isDemoEmailValid && (
-      demoContact.enabled ||
-      (isResendTestingDomain && rawDestination.toLowerCase() !== fallbackTestEmail.toLowerCase())
-    )
-  );
-
-  // If no Resend API Key configured, return truthful SIMULATED status
-  if (!resendApiKey) {
-    return {
-      channel: "EMAIL",
-      provider: "SIMULATION_ENGINE",
-      deliveryMode: "SIMULATED",
-      status: "SIMULATED",
-      deliveryLabel: "Email Simulated (No Resend API Key Configured)",
-      isRealDispatch: false,
-      destination: rawDestination || "[No Email Provided]",
-      actualDestination: rawDestination || "[No Email Provided]",
-      routedToTestContact: false,
-      content: {
-        subject: params.subject,
-        body: params.bodyText,
-        resolvedPaymentUrl: params.paymentUrl,
-      },
-      dispatchedAt: now,
-    };
-  }
-
-  // If Demo Contact mode is disabled and customer email is missing/invalid:
-  // Return FAILED directly. Never redirect to operator or test address!
-  if (!shouldUseTestContact && !isCustomerEmailValid) {
-    console.warn(`[Email Dispatch] Failed: Customer email "${rawDestination}" is missing or invalid.`);
     return {
       channel: "EMAIL",
       provider: "RESEND",
       deliveryMode: "FAILED",
       status: "FAILED",
-      deliveryLabel: "Email Failed (Customer Email Missing or Invalid)",
-      isRealDispatch: true,
-      destination: rawDestination || "[Missing Customer Email]",
-      routedToTestContact: false,
-      actualDestination: rawDestination || "[Missing Customer Email]",
-      providerErrorCode: "INVALID_CUSTOMER_EMAIL",
-      providerErrorMessage: `Customer email "${rawDestination || "None"}" is missing or invalid on the incident.`,
-      error: `Customer email "${rawDestination || "None"}" is missing or invalid on the incident.`,
+      deliveryLabel: "Email Failed (Destination Not Verified)",
+      isRealDispatch: false,
+      destination: rawCustomerEmail || "[No Email Provided]",
+      actualDestination: rawCustomerEmail || "[No Email Provided]",
+      providerErrorCode: "EMAIL_DESTINATION_NOT_VERIFIED",
+      providerErrorMessage: errorMsg,
+      error: "EMAIL_DESTINATION_NOT_VERIFIED",
       content: {
         subject: params.subject,
         body: params.bodyText,
@@ -634,19 +597,65 @@ export async function sendEmailMessage(params: {
     };
   }
 
-  const targetEmail = shouldUseTestContact ? fallbackTestEmail : rawDestination;
+  // 2. CHECK RESEND CONFIGURATION
+  const resendApiKey = process.env.RESEND_API_KEY?.trim();
+  if (!resendApiKey) {
+    const errorMsg = "Resend API key (RESEND_API_KEY) is not configured in environment variables.";
+    console.warn(`[Email Dispatch] Aborted: ${errorMsg}`);
+
+    return {
+      channel: "EMAIL",
+      provider: "RESEND",
+      deliveryMode: "FAILED",
+      status: "FAILED",
+      deliveryLabel: "Email Failed (No Resend API Key Configured)",
+      isRealDispatch: false,
+      destination: rawCustomerEmail,
+      actualDestination: rawCustomerEmail,
+      providerErrorCode: "RESEND_NOT_CONFIGURED",
+      providerErrorMessage: errorMsg,
+      error: "RESEND_NOT_CONFIGURED",
+      content: {
+        subject: params.subject,
+        body: params.bodyText,
+        resolvedPaymentUrl: params.paymentUrl,
+      },
+      dispatchedAt: now,
+    };
+  }
+
+  const emailFrom = process.env.EMAIL_FROM?.trim() || "onboarding@resend.dev";
+  if (!emailFrom) {
+    const errorMsg = "Email sender (EMAIL_FROM) is not configured in environment variables.";
+    console.warn(`[Email Dispatch] Aborted: ${errorMsg}`);
+
+    return {
+      channel: "EMAIL",
+      provider: "RESEND",
+      deliveryMode: "FAILED",
+      status: "FAILED",
+      deliveryLabel: "Email Failed (EMAIL_FROM Not Configured)",
+      isRealDispatch: false,
+      destination: rawCustomerEmail,
+      actualDestination: rawCustomerEmail,
+      providerErrorCode: "RESEND_NOT_CONFIGURED",
+      providerErrorMessage: errorMsg,
+      error: "RESEND_NOT_CONFIGURED",
+      content: {
+        subject: params.subject,
+        body: params.bodyText,
+        resolvedPaymentUrl: params.paymentUrl,
+      },
+      dispatchedAt: now,
+    };
+  }
+
+  const targetEmail = rawCustomerEmail;
 
   try {
     const htmlPayload =
       params.bodyHtml ||
       `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
-        ${
-          shouldUseTestContact
-            ? `<div style="background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 10px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 16px;">
-                ℹ️ <strong>Demo Test Mode Active:</strong> Outbound test dispatch routed to configured demo recipient <code>${targetEmail}</code> (Original Customer: <strong>${params.customerName}</strong> &lt;${rawDestination}&gt;).
-              </div>`
-            : ""
-        }
         <div style="border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 20px;">
           <h2 style="color: #0f172a; margin: 0; font-size: 20px; font-weight: 800;">Recoverly Payment Recovery</h2>
           <span style="font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;">Automated Revenue Operations Notice</span>
@@ -666,11 +675,9 @@ export async function sendEmailMessage(params: {
         <p style="font-size: 11px; color: #94a3b8; margin: 0;">Recoverly Autonomous Payment Protection • Incident Ref: <code>${params.incidentId}</code></p>
       </div>`;
 
-    const emailSubject = shouldUseTestContact
-      ? `[Demo Test for ${params.customerName}] ${params.subject || "Action Required: Resolving Your Payment"}`
-      : params.subject || "Action Required: Resolving Your Payment";
+    const emailSubject = params.subject || "Action Required: Resolving Your Payment";
 
-    console.info(`[Email Dispatch] Target recipient: ${targetEmail} (Demo Contact Mode: ${shouldUseTestContact ? "ON" : "OFF"}). Sender: ${emailFrom}...`);
+    console.info(`[Email Dispatch] Initiating real Resend dispatch to verified recipient ${targetEmail} from ${emailFrom}...`);
 
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -696,13 +703,9 @@ export async function sendEmailMessage(params: {
         provider: "RESEND",
         deliveryMode: "REAL",
         status: "SENT",
-        deliveryLabel: shouldUseTestContact
-          ? `Email Sent via Resend (Demo Contact: ${targetEmail})`
-          : `Email Sent via Resend (ID: ${data.id})`,
+        deliveryLabel: `Email Sent via Resend (ID: ${data.id})`,
         isRealDispatch: true,
         destination: targetEmail,
-        routedToTestContact: shouldUseTestContact,
-        testContactTarget: shouldUseTestContact ? targetEmail : undefined,
         actualDestination: targetEmail,
         providerMessageId: data.id,
         providerStatus: "delivered",
@@ -718,7 +721,7 @@ export async function sendEmailMessage(params: {
       let errorMsg = data.message || `Resend error HTTP ${response.status} (${data.name || "API_ERROR"})`;
       if (data.name === "validation_error" || data.statusCode === 403) {
         if (data.message && (data.message.includes("testing emails to your own email address") || data.message.includes("verify a domain"))) {
-          errorMsg = `Resend Free/Testing Restriction (validation_error): In Resend testing mode, emails can only be sent to your account email address. To deliver real emails, verify a custom domain in Resend, or enable 'Demo Test Contact' in Recoverly with your account email.`;
+          errorMsg = `Resend Free/Testing Restriction: In Resend testing mode, emails can only be sent to your account email address. To deliver real emails, verify a custom domain in Resend.`;
         }
       }
       console.warn("[Email Adapter] Resend call returned rejection:", errorMsg);
@@ -731,8 +734,6 @@ export async function sendEmailMessage(params: {
         deliveryLabel: `Email Rejected by Resend (${response.status})`,
         isRealDispatch: true,
         destination: targetEmail,
-        routedToTestContact: shouldUseTestContact,
-        testContactTarget: shouldUseTestContact ? targetEmail : undefined,
         actualDestination: targetEmail,
         providerErrorCode: String(data.name || data.statusCode || response.status),
         providerErrorMessage: errorMsg,
@@ -757,8 +758,6 @@ export async function sendEmailMessage(params: {
       deliveryLabel: "Email Call Failed (Network Exception)",
       isRealDispatch: true,
       destination: targetEmail,
-      routedToTestContact: shouldUseTestContact,
-      testContactTarget: shouldUseTestContact ? targetEmail : undefined,
       actualDestination: targetEmail,
       providerErrorCode: "NETWORK_ERROR",
       providerErrorMessage: err?.message || "Network exception contacting Resend API",

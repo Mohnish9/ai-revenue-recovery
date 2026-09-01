@@ -114,16 +114,30 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   const url = resolveApiUrl(path);
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...options,
-      headers,
-    });
-  } catch (netErr: any) {
-    const message = netErr?.message || "Network request failed";
-    console.error(`[API Network Error] ${options?.method || "GET"} ${url}:`, message);
-    throw new Error(`Unable to reach backend API (${message}). Check server status.`);
+  let response: Response | undefined;
+  const maxRetries = options?.method && options.method !== "GET" ? 1 : 2;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      });
+      break;
+    } catch (netErr: any) {
+      if (attempt < maxRetries) {
+        // Transient network glitch or server restart: wait and retry
+        await new Promise((r) => setTimeout(r, (attempt + 1) * 300));
+        continue;
+      }
+      const message = netErr?.message || "Network request failed";
+      console.error(`[API Network Error] ${options?.method || "GET"} ${url}:`, message);
+      throw new Error(`Unable to reach backend API (${message}). Check server status.`);
+    }
+  }
+
+  if (!response) {
+    throw new Error("Unable to reach backend API. Check server status.");
   }
 
   const contentType = response.headers.get("content-type") || "";

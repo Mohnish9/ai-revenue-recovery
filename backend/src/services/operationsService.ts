@@ -1,5 +1,5 @@
 import { getSupabaseClient } from "./supabaseService.js";
-import { GoogleGenAI } from "@google/genai";
+import { generateContentResilient, cleanAndParseJson } from "./geminiService.js";
 import {
   OutboundDeliveryResult,
   sendWhatsAppMessage,
@@ -55,6 +55,11 @@ function safeResult<T>(result: { data: T | null; error: { message: string } | nu
     return fallback;
   }
   return result.data ?? fallback;
+}
+
+function getFrontendRecoveryUrl(id: string): string {
+  const baseUrl = (process.env.FRONTEND_URL || "http://localhost:3000").replace(/\/+$/, "");
+  return `${baseUrl}/resolve/${id}`;
 }
 
 export async function listCustomers(limit: number, search?: string) {
@@ -541,99 +546,25 @@ export async function updateCaseStatus(caseId: string, status: string, assignedT
 }
 
 // AI Intelligence with Gemini API & Resilient Local Fallback Engine
-let genAIInstance: GoogleGenAI | null = null;
-let lastUsedApiKey = "";
-
-function getGenAI(): GoogleGenAI | null {
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.API_KEY || "").trim();
-  if (!apiKey || apiKey === "undefined" || apiKey === "null") {
-    return null;
-  }
-
-  if (!genAIInstance || lastUsedApiKey !== apiKey) {
-    try {
-      genAIInstance = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
-      lastUsedApiKey = apiKey;
-    } catch (err: any) {
-      console.warn("Failed to initialize GoogleGenAI client:", err);
-      return null;
-    }
-  }
-  return genAIInstance;
-}
-
-const GEMINI_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash"];
-
-function cleanAndParseJson(raw: string | null | undefined): any {
-  if (!raw) return null;
-  let cleaned = raw.trim();
-  if (cleaned.startsWith("```json")) {
-    cleaned = cleaned.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-  } else if (cleaned.startsWith("```")) {
-    cleaned = cleaned.replace(/^```\s*/, "").replace(/\s*```$/, "");
-  }
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-}
-
 async function generateContentWithFallback(params: {
   contents: string;
   config?: any;
 }): Promise<{ text: string; modelUsed: string } | null> {
-  const ai = getGenAI();
-  if (!ai) {
+  const result = await generateContentResilient({
+    contents: params.contents,
+    systemInstruction: params.config?.systemInstruction,
+    responseMimeType: params.config?.responseMimeType,
+    temperature: params.config?.temperature,
+  });
+
+  if (!result) {
     return null;
   }
-  let lastError: Error | null = null;
 
-  for (const model of GEMINI_MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: params.contents,
-          config: params.config,
-        });
-        const text = response.text?.trim() || "";
-        if (text) {
-          return { text, modelUsed: model };
-        }
-      } catch (err: any) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        const msg = String(err?.message || "");
-        const isTransient =
-          msg.includes("503") ||
-          msg.includes("UNAVAILABLE") ||
-          msg.includes("high demand") ||
-          msg.includes("429") ||
-          msg.includes("RESOURCE_EXHAUSTED");
-
-        if (isTransient && attempt === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          continue;
-        }
-
-        if (isTransient) {
-          break;
-        }
-
-        break;
-      }
-    }
-  }
-
-  console.warn("Gemini AI API call encountered an issue, falling back to autonomous recovery engine:", lastError?.message);
-  return null;
+  return {
+    text: result.text,
+    modelUsed: result.modelUsed,
+  };
 }
 
 function generateFallbackCaseAnalysis(contextData: any, fullCase: any, userInstruction?: string): any {
@@ -676,7 +607,7 @@ function generateFallbackCaseAnalysis(contextData: any, fullCase: any, userInstr
     optimalTiming: timing,
     recoveryProbabilityScore: prob,
     expectedRecoverableRevenue: Math.round(amount * prob),
-    tailoredMessageDraft: `Hi ${cust?.name || "there"}, we noticed a quick hiccup processing ${caseData.currency} ${amount.toLocaleString()} for your Recoverly plan. Tap here to review and complete securely: https://pay.recoverly.test/resolve/${caseData.id}`,
+    tailoredMessageDraft: `Hi ${cust?.name || "there"}, we noticed a quick hiccup processing ${caseData.currency} ${amount.toLocaleString()} for your Recoverly plan. Tap here to review and complete securely: ${getFrontendRecoveryUrl(caseData.id)}`,
     keyRiskFactors: [
       "Repeated failed retries without customer notification increase payment fatigue",
       "Proactive self-serve link prevents involuntary subscription cancellation",
@@ -1532,11 +1463,11 @@ Your response MUST be a valid JSON object matching this schema exactly:
       ],
       escalationReason: "Repeated payment rail failure or explicit customer dispute",
       customerMessage: {
-        whatsapp: `Hi ${item.customer_name}, we noticed a brief processing issue with your payment of ${item.currency} ${item.amount.toLocaleString()}. Tap here to complete securely: https://pay.recoverly.test/resolve/${item.id}`,
-        sms: `Recoverly: Resolve ${item.currency} ${item.amount.toLocaleString()} payment securely: https://rcvr.ly/${item.id.slice(-6)}`,
+        whatsapp: `Hi ${item.customer_name}, we noticed a brief processing issue with your payment of ${item.currency} ${item.amount.toLocaleString()}. Tap here to complete securely: ${getFrontendRecoveryUrl(item.id)}`,
+        sms: `Recoverly: Resolve ${item.currency} ${item.amount.toLocaleString()} payment securely: ${getFrontendRecoveryUrl(item.id)}`,
         email: {
           subject: `Action Required: Resolving payment of ${item.currency} ${item.amount.toLocaleString()}`,
-          body: `Dear ${item.customer_name},\n\nWe encountered a temporary processing issue for your payment of ${item.currency} ${item.amount.toLocaleString()}.\n\nPlease click below to review and resolve:\nhttps://pay.recoverly.test/resolve/${item.id}\n\nBest regards,\nRecoverly Operations`,
+          body: `Dear ${item.customer_name},\n\nWe encountered a temporary processing issue for your payment of ${item.currency} ${item.amount.toLocaleString()}.\n\nPlease click below to review and resolve:\n${getFrontendRecoveryUrl(item.id)}\n\nBest regards,\nRecoverly Operations`,
         },
       },
       confidence: 0.85,
@@ -2075,7 +2006,7 @@ Respond strictly in valid JSON matching this schema:
       actionTitle: title,
       decisionRationale: reason,
       selectedStrategy: title,
-      tailoredMessage: `Hi ${item.customer_name}, please resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: https://pay.recoverly.test/resolve/${item.id}`,
+      tailoredMessage: `Hi ${item.customer_name}, please resolve your ${item.currency} ${item.amount.toLocaleString()} payment securely: ${getFrontendRecoveryUrl(item.id)}`,
       channel: cap === "VOICE_CALL" ? "VOICE" : cap === "EMAIL_OUTREACH" ? "EMAIL" : "GATEWAY",
       simulatedSettlement: settled,
       recoveryProbability: settled ? 0.94 : 0.76,
@@ -2480,7 +2411,7 @@ Your response MUST be a valid JSON object matching this schema:
         voice: `Hello ${item.customer_name}, this is Recoverly with an update regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}. We have dispatched a direct payment resolution link to your email.`,
         email: {
           subject: `Follow-up: Resolving your ${item.currency} ${item.amount.toLocaleString()} payment`,
-          body: `Dear ${item.customer_name},\n\nWe are following up regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}.\n\nPlease click below to complete:\nhttps://pay.recoverly.test/resolve/${item.id}\n\nBest regards,\nRecoverly Operations`,
+          body: `Dear ${item.customer_name},\n\nWe are following up regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}.\n\nPlease click below to complete:\n${getFrontendRecoveryUrl(item.id)}\n\nBest regards,\nRecoverly Operations`,
         },
       },
       confidence: 0.80,

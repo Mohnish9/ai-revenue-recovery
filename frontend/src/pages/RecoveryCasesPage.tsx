@@ -372,11 +372,14 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
                             statusText = "PROCESSING";
                           } else if (act) {
                             const primaryDisp = act?.channelDispatches?.[0];
-                            const isFailed = act.providerStatus === "FAILED" || act.status === "FAILED" || act.status === "CHANNEL_EXECUTION_FAILED" || primaryDisp?.status === "FAILED";
-                            if (isFailed) {
-                              statusText = "FAILED";
-                            } else {
+                            const isRealSuccess =
+                              (primaryDisp?.deliveryMode === "REAL" || act.deliveryMode === "REAL") &&
+                              (primaryDisp?.status === "SENT" || primaryDisp?.status === "DELIVERED" || act.providerStatus === "SENT" || act.status === "EXECUTED");
+                            
+                            if (isRealSuccess) {
                               statusText = channelLabel === "CALL" ? "COMPLETED" : "SENT";
+                            } else {
+                              statusText = "FAILED";
                             }
                           }
 

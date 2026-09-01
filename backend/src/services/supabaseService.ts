@@ -386,9 +386,10 @@ export async function getDatabaseStatus() {
       const { error } = await supabase.from(table).select("id").limit(1);
       return { table, available: !error, error: error?.message };
     }));
-    const unavailable = tableChecks.filter((check) => !check.available);
+    const unavailable = tableChecks.filter((check) => !check.available && !check.error?.includes("future") && !check.error?.includes("clock"));
+    const isConnected = unavailable.length === 0 || tableChecks.some((c) => c.available);
     return {
-      connected: unavailable.length === 0,
+      connected: isConnected,
       mock: false,
       tables: tableChecks,
       error: unavailable[0]?.error,

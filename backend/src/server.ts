@@ -21,10 +21,28 @@ app.use(express.urlencoded({ extended: true }));
 
 // CORS & Preflight handler
 app.use((request, response, next) => {
-  const origin = request.headers.origin || "*";
-  response.header("Access-Control-Allow-Origin", origin);
-  response.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
-  response.header("Access-Control-Allow-Methods", "GET,OPTIONS,POST,PUT,PATCH,DELETE");
+  const configuredFrontend = (process.env.FRONTEND_URL || "").trim().replace(/\/+$/, "");
+  const requestOrigin = request.headers.origin;
+
+  if (configuredFrontend) {
+    if (
+      !requestOrigin ||
+      requestOrigin === configuredFrontend ||
+      requestOrigin.endsWith(".vercel.app") ||
+      requestOrigin.includes("localhost") ||
+      requestOrigin.includes("127.0.0.1") ||
+      requestOrigin.includes(".run.app")
+    ) {
+      response.header("Access-Control-Allow-Origin", requestOrigin || configuredFrontend);
+    } else {
+      response.header("Access-Control-Allow-Origin", configuredFrontend);
+    }
+  } else {
+    response.header("Access-Control-Allow-Origin", requestOrigin || "*");
+  }
+
+  response.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin");
+  response.header("Access-Control-Allow-Methods", "GET,OPTIONS,POST,PUT,PATCH,DELETE,HEAD");
   if (request.headers.origin) {
     response.header("Access-Control-Allow-Credentials", "true");
   }

@@ -625,13 +625,10 @@ Respond strictly in valid JSON matching this schema:
         ? `Subject: ${emailSubject}\n\n${emailBody}`
         : `[AI Spoken Voice Script - Exotel]\n\n"${voiceScript}"`;
 
-    const deliveryMode = effectiveDispatch.deliveryMode || (effectiveDispatch.status === "SENT" ? "REAL" : effectiveDispatch.status === "SIMULATED" ? "SIMULATED" : "FAILED");
-    const isRealSent = deliveryMode === "REAL" && effectiveDispatch.status === "SENT";
-    const isSimulated = deliveryMode === "SIMULATED" || effectiveDispatch.status === "SIMULATED";
-    const isFailed = deliveryMode === "FAILED" || effectiveDispatch.status === "FAILED";
-
-    const actionStatus = isRealSent ? "EXECUTED" : isSimulated ? "SIMULATED" : "CHANNEL_EXECUTION_FAILED";
-    const providerStatus = isRealSent ? "SENT" : isSimulated ? "SIMULATED" : "FAILED";
+    const isRealSent = effectiveDispatch.deliveryMode === "REAL" && effectiveDispatch.status === "SENT";
+    const deliveryMode = isRealSent ? "REAL" : "FAILED";
+    const actionStatus = isRealSent ? "EXECUTED" : "CHANNEL_EXECUTION_FAILED";
+    const providerStatus = isRealSent ? "SENT" : "FAILED";
     const providerName = effectiveDispatch.provider || (chosenChannel === "EMAIL" ? "Resend" : "Exotel");
     const providerId = effectiveDispatch.providerMessageId || undefined;
     const providerErrorCode = effectiveDispatch.providerErrorCode || primaryDispatch.providerErrorCode;
@@ -650,7 +647,7 @@ Respond strictly in valid JSON matching this schema:
       status: actionStatus,
       deliveryMode,
       gatewayLatency: `${Math.floor(Math.random() * 40 + 85)}ms`,
-      pspResponseCode: aiDecision.pspResponseCode || "DISPATCHED_200",
+      pspResponseCode: isRealSent ? (aiDecision.pspResponseCode || "DISPATCHED_200") : (providerErrorCode || "DISPATCH_FAILED"),
       projectedRecovery,
       operatorName: "Recoverly Autonomous AI Engine",
       reason: aiDecision.reason || `Executed dynamic recovery attempt #${attemptNumber} via ${chosenChannel}.`,
@@ -667,13 +664,9 @@ Respond strictly in valid JSON matching this schema:
       channelDispatches,
       details: isRealSent
         ? `Real provider dispatch via ${providerName} (${primaryDispatch.deliveryLabel}). SID: ${providerId}. Awaiting customer resolution.`
-        : isSimulated
-        ? `Simulation execution (${primaryDispatch.deliveryLabel}). No real provider outreach was dispatched.`
-        : `Provider outreach FAILED via ${providerName}. ${providerErrorCode ? `Error Code: ${providerErrorCode}. ` : ""}Diagnostic: ${providerErrorMessage || primaryDispatch.error}. Recorded for Attempt #${attemptNumber + 1}.`,
+        : `Provider outreach FAILED via ${providerName}. ${providerErrorCode ? `Error Code: ${providerErrorCode}. ` : ""}Diagnostic: ${providerErrorMessage || primaryDispatch.error || "Outreach failed"}. Recorded for Attempt #${attemptNumber + 1}.`,
       result: isRealSent
         ? `Real message delivered to provider — SID: ${providerId}`
-        : isSimulated
-        ? "Simulation outcome recorded — no real message sent"
         : `${chosenChannel} delivery failed (${providerErrorCode || "ERROR"}). Sequence remains deterministic.`,
       nextDecision:
         attemptNumber === 1
@@ -693,9 +686,9 @@ Respond strictly in valid JSON matching this schema:
       id: `tl-att-${attemptNumber}-${Date.now().toString().slice(-4)}`,
       timestamp: timeStr,
       type: "ATTEMPT",
-      title: `Attempt #${attemptNumber} Executed • ${actionRecord.actionTitle}`,
+      title: `Attempt #${attemptNumber} ${isRealSent ? "Executed" : "Failed"} • ${actionRecord.actionTitle}`,
       description: actionRecord.details || "",
-      status: actionRecord.status === "CHANNEL_EXECUTION_FAILED" ? "FAILED" : "COMPLETED",
+      status: isRealSent ? "COMPLETED" : "FAILED",
       attemptNumber,
       channelDispatches,
       details: {
