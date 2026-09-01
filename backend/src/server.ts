@@ -74,27 +74,55 @@ app.all("/api", (_request, response) => {
   response.status(404).json({ error: "API route not found" });
 });
 
-// In dev mode, attach Vite middleware. In production, serve dist.
-if (process.env.NODE_ENV === "production" && fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
-  app.get("*", (request, response) => {
-    if (request.path.startsWith("/api")) {
-      response.status(404).json({ error: "API route not found" });
-      return;
-    }
-    response.sendFile(path.join(distDir, "index.html"));
-  });
+// In production mode, serve static dist if available; otherwise serve standalone API mode.
+// Vite dev middleware is only loaded in non-production environments.
+if (process.env.NODE_ENV === "production") {
+  if (fs.existsSync(distDir)) {
+    app.use(express.static(distDir));
+    app.get("*", (request, response) => {
+      if (request.path.startsWith("/api") || request.path.startsWith("/telemetry")) {
+        response.status(404).json({ error: "API route not found" });
+        return;
+      }
+      response.sendFile(path.join(distDir, "index.html"));
+    });
+  } else {
+    // Standalone API Backend mode (e.g. Render)
+    app.get("/", (_request, response) => {
+      response.json({
+        status: "ok",
+        service: "Recoverly API Backend",
+        version: "0.1.0",
+        environment: "production",
+      });
+    });
+    app.get("*", (request, response) => {
+      if (request.path.startsWith("/api") || request.path.startsWith("/telemetry")) {
+        response.status(404).json({ error: "API route not found" });
+        return;
+      }
+      response.status(404).json({ error: "Route not found. Backend running in standalone API mode." });
+    });
+  }
 } else {
-  const { createServer } = await import("vite");
-  const vite = await createServer({
-    root: frontendDir,
-    server: {
-      middlewareMode: true,
-      hmr: false,
-    },
-    appType: "spa",
-  });
-  app.use(vite.middlewares);
+  // Development mode: attach Vite dev server middleware if available
+  try {
+    const viteModuleName = "vite";
+    const viteModule = (await import(/* @vite-ignore */ viteModuleName)) as {
+      createServer: (options: Record<string, unknown>) => Promise<{ middlewares: express.Handler }>;
+    };
+    const vite = await viteModule.createServer({
+      root: frontendDir,
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } catch (err) {
+    console.warn("[Vite Middleware] Vite dev middleware not attached:", (err as Error)?.message || err);
+  }
 }
 
 app.use((error: Error, req: express.Request, response: express.Response, _next: express.NextFunction) => {
