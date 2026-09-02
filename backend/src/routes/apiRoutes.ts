@@ -86,10 +86,12 @@ export const apiRoutes = Router();
 apiRoutes.get("/health", getHealth);
 
 // Public Exotel Dynamic Voice Recovery & Webhook Callback Probes (No Auth Required)
-apiRoutes.get("/voice/recovery-message", getVoiceRecoveryMessageController);
-apiRoutes.head("/voice/recovery-message", getVoiceRecoveryMessageController);
-apiRoutes.post("/voice/exotel-callback", exotelCallbackController);
-apiRoutes.get("/voice/exotel-callback", exotelCallbackController);
+apiRoutes.all("/voice/recovery-message", getVoiceRecoveryMessageController);
+apiRoutes.all("/voice/passthru", getVoiceRecoveryMessageController);
+apiRoutes.all("/voice/script", getVoiceRecoveryMessageController);
+apiRoutes.all("/voice/message", getVoiceRecoveryMessageController);
+apiRoutes.all("/voice/exotel-passthru", getVoiceRecoveryMessageController);
+apiRoutes.all("/voice/exotel-callback", exotelCallbackController);
 
 // Public Customer Self-Service Payment & Incident Resolution Endpoints (No Auth Required)
 apiRoutes.get("/sandbox/incidents/:id/public", getPublicSandboxIncidentController);

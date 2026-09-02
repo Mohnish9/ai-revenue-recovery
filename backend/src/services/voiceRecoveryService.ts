@@ -468,7 +468,13 @@ export async function dispatchExotelVoiceCall(
   const exotelApiToken = process.env.EXOTEL_API_TOKEN?.trim();
   const exotelSid = process.env.EXOTEL_SID?.trim();
   const exotelExoPhone = process.env.EXOTEL_EXOPHONE?.trim();
-  const exotelAppId = process.env.EXOTEL_APP_ID?.trim() || (process.env as any).EXOTEL_FLOW_ID?.trim();
+  const rawAppIdOrUrl = (
+    process.env.EXOTEL_APP_ID ||
+    (process.env as any).EXOTEL_FLOW_ID ||
+    (process.env as any).EXOTEL_FLOW_URL ||
+    (process.env as any).EXOTEL_URL ||
+    ""
+  ).trim();
 
   if (!exotelApiKey || !exotelApiToken || !exotelSid || !exotelExoPhone) {
     const missingKeys: string[] = [];
@@ -527,6 +533,16 @@ export async function dispatchExotelVoiceCall(
     const baseUrl = (process.env.BACKEND_URL || "").trim();
     const statusCallbackUrl = baseUrl ? `${baseUrl}/api/voice/exotel-callback` : undefined;
 
+    // Construct Exotel flow URL for ExoML
+    // Exotel canonical flow URL format: http://my.exotel.com/<EXOTEL_SID>/exoml/start_voice/<APP_ID>
+    let flowUrl: string | undefined = undefined;
+    if (rawAppIdOrUrl.startsWith("http://") || rawAppIdOrUrl.startsWith("https://")) {
+      flowUrl = rawAppIdOrUrl;
+    } else if (rawAppIdOrUrl) {
+      // If the user provided just the numeric/string App ID (e.g. 123456), format it as start_voice URL
+      flowUrl = `http://my.exotel.com/${encodeURIComponent(exotelSid)}/exoml/start_voice/${encodeURIComponent(rawAppIdOrUrl)}`;
+    }
+
     // Exotel Connect Call API: https://api.exotel.com/v1/Accounts/<EXOTEL_SID>/Calls/connect.json
     const exotelUrl = `https://api.exotel.com/v1/Accounts/${encodeURIComponent(exotelSid)}/Calls/connect.json`;
     const basicAuth = Buffer.from(`${exotelApiKey}:${exotelApiToken}`).toString("base64");
@@ -537,14 +553,24 @@ export async function dispatchExotelVoiceCall(
     formData.append("CallType", "trans");
     formData.append("CustomField", incident.id);
 
-    if (exotelAppId) {
-      formData.append("Url", `http://my.exotel.com/${encodeURIComponent(exotelSid)}/exomls/${encodeURIComponent(exotelAppId)}`);
+    if (flowUrl) {
+      formData.append("Url", flowUrl);
+    } else {
+      console.warn(`[Exotel Voice] ⚠️ WARNING: EXOTEL_APP_ID is not configured in environment variables. Call will be placed without a Flow URL and may disconnect upon answer.`);
     }
+
     if (statusCallbackUrl) {
       formData.append("StatusCallback", statusCallbackUrl);
     }
 
-    console.info(`[Exotel Voice] Initiating real outbound call to ${targetPhone} (CallerId: ${exotelExoPhone}, AppId: ${exotelAppId || "none"}, CustomField: ${incident.id})...`);
+    console.info(`[Exotel Voice] 📞 Dispatching Exotel Calls/connect API`);
+    console.info(`[Exotel Voice] ├─ Endpoint: ${exotelUrl}`);
+    console.info(`[Exotel Voice] ├─ Target (From): ${targetPhone}`);
+    console.info(`[Exotel Voice] ├─ Caller ID: ${exotelExoPhone}`);
+    console.info(`[Exotel Voice] ├─ Flow URL: ${flowUrl || "NOT_SET"}`);
+    console.info(`[Exotel Voice] ├─ CustomField: "${incident.id}"`);
+    console.info(`[Exotel Voice] ├─ StatusCallback: ${statusCallbackUrl || "NOT_SET"}`);
+    console.info(`[Exotel Voice] └─ Pre-cached Script: "${scriptPreview.slice(0, 70)}..."`);
 
     const response = await fetch(exotelUrl, {
       method: "POST",
@@ -576,7 +602,7 @@ export async function dispatchExotelVoiceCall(
             call_sid: callSid,
             destination: targetPhone,
             caller_id: exotelExoPhone,
-            app_id: exotelAppId,
+            app_id: flowUrl || rawAppIdOrUrl || "DEFAULT_FLOW",
             status: "REQUESTED",
             provider_status: callStatus,
             voice_script_preview: scriptPreview.slice(0, 150),
