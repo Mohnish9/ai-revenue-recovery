@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import type { PageKey, HumanEscalationItem, HumanEscalationsSummaryResponse } from "../lib/types";
+import { useAuth } from "../lib/authContext";
 import {
   fetchHumanEscalationsApi,
   resolveHumanEscalationApi,
@@ -14,6 +15,8 @@ interface HumanEscalationsPageProps {
 }
 
 export function HumanEscalationsPage({ onNavigate, onSelectCase }: HumanEscalationsPageProps) {
+  const { user } = useAuth();
+  const defaultOperatorName = user?.name || "Revenue Specialist";
   const [data, setData] = useState<HumanEscalationsSummaryResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,13 +30,13 @@ export function HumanEscalationsPage({ onNavigate, onSelectCase }: HumanEscalati
 
   // Take Ownership modal state
   const [claimingItem, setClaimingItem] = useState<HumanEscalationItem | null>(null);
-  const [claimOperatorName, setClaimOperatorName] = useState<string>("Mohnish Kaplish (Senior Specialist)");
+  const [claimOperatorName, setClaimOperatorName] = useState<string>(defaultOperatorName);
   const [submittingClaim, setSubmittingClaim] = useState<boolean>(false);
 
   // Add Note modal state
   const [notingItem, setNotingItem] = useState<HumanEscalationItem | null>(null);
   const [noteContent, setNoteContent] = useState<string>("");
-  const [noteAuthor, setNoteAuthor] = useState<string>("Mohnish Kaplish");
+  const [noteAuthor, setNoteAuthor] = useState<string>(defaultOperatorName);
   const [submittingNote, setSubmittingNote] = useState<boolean>(false);
 
   // Resolve modal state
@@ -41,9 +44,17 @@ export function HumanEscalationsPage({ onNavigate, onSelectCase }: HumanEscalati
   const [resolutionType, setResolutionType] = useState<string>("VIP_PHONE_SETTLEMENT");
   const [operatorNotes, setOperatorNotes] = useState<string>("");
   const [settlementAmount, setSettlementAmount] = useState<string>("");
-  const [operatorName, setOperatorName] = useState<string>("Mohnish Kaplish");
+  const [operatorName, setOperatorName] = useState<string>(defaultOperatorName);
   const [submittingResolution, setSubmittingResolution] = useState<boolean>(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user?.name) {
+      setClaimOperatorName(user.name);
+      setNoteAuthor(user.name);
+      setOperatorName(user.name);
+    }
+  }, [user?.name]);
 
   // Simulation loader
   const [simulating, setSimulating] = useState<boolean>(false);

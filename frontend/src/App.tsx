@@ -62,9 +62,80 @@ const VALID_PAGE_KEYS: PageKey[] = [
 ];
 
 function getInitialPage(): PageKey {
-  const path = window.location.pathname.replace(/^\/+/, "").split("/")[0] as PageKey;
-  if (path === ("overview" as any) || path === ("" as any)) return "dashboard";
-  return VALID_PAGE_KEYS.includes(path) ? path : "dashboard";
+  const rawPath = window.location.pathname.replace(/^\/+/, "").toLowerCase();
+  const segments = rawPath.split("/").filter(Boolean);
+  const root = segments[0] || "";
+  const sub = segments[1] || "";
+
+  if (root === "overview" || root === "dashboard" || root === "") {
+    return "dashboard";
+  }
+  if (root === "telemetry" || root === "telemetry-queue") {
+    return "telemetry-queue";
+  }
+  if (root === "recovery-demo") {
+    return "recovery-demo";
+  }
+  if (root === "operations") {
+    const validOperationsSub: Record<string, PageKey> = {
+      recovery: "recovery",
+      "human-escalations": "human-escalations",
+      "failed-payments": "failed-payments",
+      transactions: "transactions",
+      invoices: "invoices",
+      subscriptions: "subscriptions",
+      "checkout-dropoffs": "checkout-dropoffs",
+      mandates: "mandates",
+      customers: "customers",
+      scenarios: "scenarios",
+    };
+    return (sub && validOperationsSub[sub]) ? validOperationsSub[sub] : "recovery";
+  }
+  if (root === "intelligence") {
+    const validIntelligenceSub: Record<string, PageKey> = {
+      agent: "agent",
+      "policy-rules": "policy-rules",
+      health: "health",
+    };
+    return (sub && validIntelligenceSub[sub]) ? validIntelligenceSub[sub] : "agent";
+  }
+  if (root === "insights") {
+    const validInsightsSub: Record<string, PageKey> = {
+      analytics: "analytics",
+      audit: "audit",
+    };
+    return (sub && validInsightsSub[sub]) ? validInsightsSub[sub] : "analytics";
+  }
+  return VALID_PAGE_KEYS.includes(root as PageKey) ? (root as PageKey) : "dashboard";
+}
+
+function getRouteForPage(pageKey: PageKey): string {
+  if (pageKey === "dashboard") return "/overview";
+  if (pageKey === "telemetry-queue") return "/telemetry";
+  if (pageKey === "recovery-demo") return "/recovery-demo";
+  if (
+    [
+      "recovery",
+      "human-escalations",
+      "failed-payments",
+      "transactions",
+      "invoices",
+      "subscriptions",
+      "checkout-dropoffs",
+      "mandates",
+      "customers",
+      "scenarios",
+    ].includes(pageKey)
+  ) {
+    return `/operations/${pageKey}`;
+  }
+  if (["agent", "policy-rules", "health"].includes(pageKey)) {
+    return `/intelligence/${pageKey}`;
+  }
+  if (["analytics", "audit"].includes(pageKey)) {
+    return `/insights/${pageKey}`;
+  }
+  return `/${pageKey}`;
 }
 
 function AuthenticatedApp() {
@@ -95,30 +166,44 @@ function AuthenticatedApp() {
   useEffect(() => {
     if (user) {
       loadSummary();
+    } else {
+      setSummary(null);
+      setSelectedCaseId(null);
+      setSelectedCustomerId(null);
     }
   }, [user, refreshKey]);
 
   useEffect(() => {
     const handlePopState = () => {
-      setPage(getInitialPage());
+      if (!user) {
+        if (window.location.pathname !== "/login") {
+          window.history.replaceState({}, "", "/login");
+        }
+      } else {
+        setPage(getInitialPage());
+      }
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!loading) {
-      if (!user && window.location.pathname !== "/login") {
-        window.history.replaceState({}, "", "/login");
-      } else if (user && (window.location.pathname === "/login" || window.location.pathname === "/")) {
-        window.history.replaceState({}, "", "/overview");
+      if (!user) {
+        if (window.location.pathname !== "/login") {
+          window.history.replaceState({}, "", "/login");
+        }
+      } else {
+        if (window.location.pathname === "/login" || window.location.pathname === "/") {
+          window.history.replaceState({}, "", "/overview");
+        }
       }
     }
   }, [user, loading]);
 
   const navigate = (nextPage: PageKey, caseId?: string) => {
     setPage(nextPage);
-    const route = nextPage === "dashboard" ? "/overview" : `/${nextPage}`;
+    const route = getRouteForPage(nextPage);
     window.history.pushState({}, "", route);
     setMenuOpen(false);
     if (caseId) {

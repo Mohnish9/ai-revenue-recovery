@@ -37,14 +37,6 @@ const mockAuditLogs: any[] = [];
 
 const mockUsers = [
   {
-    id: "usr_demo_001",
-    email: "mohnishkaplish92@gmail.com",
-    password: "Password123!",
-    created_at: "2026-08-01T00:00:00Z",
-    last_sign_in_at: "2026-08-22T06:00:00Z",
-    user_metadata: { name: "Mohnish Kaplish", role: "REVENUE_ADMIN" },
-  },
-  {
     id: "usr_demo_002",
     email: "admin@recoverly.ai",
     password: "Password123!",

@@ -1,6 +1,6 @@
 import { getSupabaseClient } from "./supabaseService.js";
 import { generateContentResilient } from "./geminiService.js";
-import { canUserAccess, isMohnishUser, getOwnerIdForUser } from "./dataAccessService.js";
+import { canUserAccess, getOwnerIdForUser } from "./dataAccessService.js";
 import type { UserProfile } from "./authService.js";
 import {
   createSandboxIncident,
@@ -1308,50 +1308,27 @@ Respond strictly in valid JSON matching this schema:
 
 // Reset demo queue to initial WAITING state for re-running demonstrations
 export async function resetTelemetryDemoQueue(user?: UserProfile): Promise<void> {
-  const isMohnish = isMohnishUser(user);
   const ownerId = getOwnerIdForUser(user);
-
   const dataset = generateSyntheticTelemetryDataset(ownerId);
 
-  // If user is Mohnish, reset demo pool
-  if (isMohnish || !user) {
-    memoryTelemetryRecords.clear();
-    memoryGroundTruth.clear();
-    for (const rec of dataset.records) {
-      memoryTelemetryRecords.set(rec.id, rec);
-    }
-    for (const gt of dataset.groundTruths) {
-      memoryGroundTruth.set(gt.telemetryId, gt);
-    }
-    memoryAIAnalyses.clear();
-    memoryEvaluations.clear();
-    memoryProcessingRuns.clear();
-  } else {
-    // For other authenticated users, remove their existing records and insert their fresh 40-item batch
-    for (const [key, rec] of memoryTelemetryRecords.entries()) {
-      if (rec.owner_id === user.id) {
-        memoryTelemetryRecords.delete(key);
-        memoryAIAnalyses.delete(key);
-        memoryEvaluations.delete(key);
-      }
-    }
-    for (const rec of dataset.records) {
-      const userRecId = `TEL-${user.id.slice(-4)}-${rec.batchNumber.toString().padStart(2, "0")}`;
-      const tailoredRec = {
-        ...rec,
-        id: userRecId,
-        owner_id: user.id,
-      };
-      memoryTelemetryRecords.set(userRecId, tailoredRec);
-    }
+  // Reset demo pool
+  memoryTelemetryRecords.clear();
+  memoryGroundTruth.clear();
+  for (const rec of dataset.records) {
+    memoryTelemetryRecords.set(rec.id, rec);
   }
+  for (const gt of dataset.groundTruths) {
+    memoryGroundTruth.set(gt.telemetryId, gt);
+  }
+  memoryAIAnalyses.clear();
+  memoryEvaluations.clear();
+  memoryProcessingRuns.clear();
 
   const supabase = getSupabaseClient();
   try {
     for (const rec of dataset.records) {
-      const recId = isMohnish || !user ? rec.id : `TEL-${user.id.slice(-4)}-${rec.batchNumber.toString().padStart(2, "0")}`;
       await supabase.from("synthetic_telemetry_records").upsert({
-        id: recId,
+        id: rec.id,
         owner_id: ownerId,
         batch_number: rec.batchNumber,
         title: rec.title,

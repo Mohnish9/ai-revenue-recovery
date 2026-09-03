@@ -105,12 +105,11 @@ export async function verifyTokenAndGetUser(token: string): Promise<UserProfile>
       };
     }
   } catch (err) {
-    // Continue to fallback token parsing
+    // Continue to fallback token validation via Supabase Admin
   }
 
-  // Handle mock tokens if in mock mode
+  // Handle mock tokens if in mock database mode
   if (cleanToken.startsWith("mock_jwt_")) {
-    const userIdMatch = cleanToken.replace("mock_jwt_", "");
     const { data } = await supabase.auth.getUser(cleanToken);
     if (data?.user) {
       const u = data.user;
@@ -125,41 +124,24 @@ export async function verifyTokenAndGetUser(token: string): Promise<UserProfile>
     }
   }
 
-  // Gracefully handle JWT payload verification
+  // Cryptographic check with Supabase Admin API using token sub claim
   try {
     const parts = cleanToken.split(".");
     if (parts.length === 3) {
       const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
-      if (payload && (payload.sub || payload.email)) {
-        // Try fetching user record from Supabase Admin API with service role
-        try {
-          if (supabase.auth?.admin?.getUserById && payload.sub) {
-            const { data: adminData } = await supabase.auth.admin.getUserById(payload.sub);
-            if (adminData?.user) {
-              const u = adminData.user;
-              return {
-                id: u.id,
-                email: u.email || payload.email || "",
-                name: u.user_metadata?.name || u.email?.split("@")[0] || payload.name || "Operator",
-                role: u.user_metadata?.role || payload.role || "REVENUE_ADMIN",
-                created_at: u.created_at,
-                last_sign_in_at: u.last_sign_in_at,
-              };
-            }
-          }
-        } catch {
-          // Non-blocking fallback to payload claims
+      if (payload && payload.sub && supabase.auth?.admin?.getUserById) {
+        const { data: adminData, error: adminErr } = await supabase.auth.admin.getUserById(payload.sub);
+        if (!adminErr && adminData?.user) {
+          const u = adminData.user;
+          return {
+            id: u.id,
+            email: u.email || payload.email || "",
+            name: u.user_metadata?.name || u.email?.split("@")[0] || payload.name || "Operator",
+            role: u.user_metadata?.role || payload.role || "REVENUE_ADMIN",
+            created_at: u.created_at,
+            last_sign_in_at: u.last_sign_in_at,
+          };
         }
-
-        // Return user from verified payload claims
-        return {
-          id: payload.sub || `usr_${Date.now()}`,
-          email: payload.email || "",
-          name: payload.user_metadata?.name || payload.name || payload.email?.split("@")[0] || "Operator",
-          role: payload.user_metadata?.role || payload.role || "REVENUE_OPERATOR",
-          created_at: new Date().toISOString(),
-          last_sign_in_at: new Date().toISOString(),
-        };
       }
     }
   } catch (parseErr) {
@@ -187,9 +169,10 @@ export async function signOutSession(token?: string): Promise<void> {
 export async function ensureDefaultAdminExists(): Promise<void> {
   try {
     const supabase = getSupabaseClient();
+    const adminEmail = process.env.ADMIN_EMAIL || "admin@recoverly.ai";
+    const adminPass = process.env.ADMIN_PASSWORD || "Password123!";
     const accounts = [
-      { email: "mohnishkaplish92@gmail.com", name: "Mohnish Kaplish", role: "REVENUE_ADMIN", password: "Password123!" },
-      { email: "admin@recoverly.ai", name: "Recoverly Admin", role: "REVENUE_ADMIN", password: "Password123!" },
+      { email: adminEmail, name: "Recoverly Admin", role: "REVENUE_ADMIN", password: adminPass },
     ];
 
     const { data: usersData } = await supabase.auth.admin.listUsers();

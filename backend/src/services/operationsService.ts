@@ -6,7 +6,7 @@ import {
   sendEmailMessage,
 } from "./messagingService.js";
 import { sendExotelSmsRecovery } from "./smsRecoveryService.js";
-import { UserProfile, canUserAccess, isMohnishUser, getOwnerIdForUser } from "./dataAccessService.js";
+import { UserProfile, canUserAccess, getOwnerIdForUser } from "./dataAccessService.js";
 import {
   persistentSandboxIncidents,
   mapStoredIncidentToResponse,
@@ -3039,12 +3039,12 @@ export async function listHumanEscalations(user?: UserProfile) {
         lastAiStrategy: "Mandate Re-registration Prompt",
         lastProviderResult: "FAILED (U30)",
         lastAiAction: "Email Mandate Re-auth Link Dispatched",
-        owner: "Mohnish Kaplish",
+        owner: "Revenue Specialist",
         operatorNotes: [
           {
             id: "note-init-2",
-            note: "Claimed by Mohnish. Email sent requesting Priya to authenticate the newly generated NPCI e-mandate.",
-            author: "Mohnish Kaplish",
+            note: "Claimed by operator. Email sent requesting Priya to authenticate the newly generated NPCI e-mandate.",
+            author: "Revenue Specialist",
             timestamp: new Date(now.getTime() - 30 * 60000).toISOString(),
           },
         ],
@@ -3139,12 +3139,12 @@ export async function listHumanEscalations(user?: UserProfile) {
         lastAiStrategy: "Direct Operator Resolution",
         lastProviderResult: "SETTLED_BY_OPERATOR",
         lastAiAction: "Operator Phone Call Settlement",
-        owner: "Mohnish Kaplish",
+        owner: "Revenue Specialist",
         operatorNotes: [
           {
             id: "note-init-3",
-            note: "Spoke with Vikram via direct phone call. Sent alternate corporate AMEX link. Transaction approved immediately.",
-            author: "Mohnish Kaplish",
+            note: "Spoke with customer via direct phone call. Sent alternate corporate payment link. Transaction approved immediately.",
+            author: "Revenue Specialist",
             timestamp: new Date(now.getTime() - 90 * 60000).toISOString(),
           },
         ],
@@ -3167,7 +3167,7 @@ export async function listHumanEscalations(user?: UserProfile) {
             timestamp: "08:45 AM",
             type: "DECIDE",
             title: "Operator Resolved Case",
-            description: "Operator Mohnish Kaplish successfully settled transaction of ₹82,000.",
+            description: "Operator successfully settled transaction of ₹82,000.",
             status: "COMPLETED",
           },
         ],

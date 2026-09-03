@@ -38,20 +38,6 @@ export function LoginPage() {
     }
   };
 
-  const handleQuickDemoLogin = async (demoEmail: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    try {
-      setSubmitting(true);
-      setError(null);
-      await login(demoEmail, demoPass);
-    } catch (err: any) {
-      setError(err.message || "Failed to log in with demo operator");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <div
       style={{
@@ -183,7 +169,7 @@ export function LoginPage() {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Mohnish Kaplish"
+                  placeholder="e.g. Alex Morgan"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   style={{
@@ -301,50 +287,6 @@ export function LoginPage() {
                 : "Create Verified Operator Account →"}
             </button>
           </form>
-
-          {/* Quick Demo Pre-fills */}
-          <div
-            style={{
-              marginTop: "20px",
-              paddingTop: "16px",
-              borderTop: "1px solid #1a2c38",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "10.5px", color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>
-                1-Click Quick Operator Sign In
-              </span>
-              <span style={{ fontSize: "10px", color: "#10b981", background: "rgba(16, 185, 129, 0.1)", padding: "2px 6px", borderRadius: "4px" }}>
-                ✓ Production Verified
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handleQuickDemoLogin("mohnishkaplish92@gmail.com", "Password123!")}
-              disabled={submitting}
-              style={{
-                width: "100%",
-                padding: "8px 12px",
-                background: "#12232f",
-                border: "1px solid #1e3545",
-                borderRadius: "6px",
-                color: "#cbd5e1",
-                fontSize: "11px",
-                textAlign: "left",
-                cursor: "pointer",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <div>
-                <strong style={{ color: "#ffffff", display: "block" }}>Mohnish Kaplish (Admin)</strong>
-                <span style={{ fontSize: "10px", color: "#94a3b8" }}>mohnishkaplish92@gmail.com</span>
-              </div>
-              <span style={{ color: "#d8ee9b", fontSize: "12px", fontWeight: 700 }}>Quick Login ➔</span>
-            </button>
-          </div>
         </div>
 
         {/* Security Footer */}

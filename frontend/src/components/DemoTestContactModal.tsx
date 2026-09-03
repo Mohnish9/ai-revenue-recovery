@@ -255,7 +255,7 @@ export function DemoTestContactModal({
                     type="email"
                     value={config.testEmail}
                     onChange={(e) => setConfig({ ...config, testEmail: e.target.value })}
-                    placeholder="mohnishkaplish92@gmail.com"
+                    placeholder="operator@company.com"
                     style={{
                       width: "100%",
                       padding: "10px 14px",

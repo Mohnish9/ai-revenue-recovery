@@ -63,8 +63,6 @@ app.use("/api", (_req, res, next) => {
 
 // API Routes (must precede SPA fallback)
 app.use("/api", apiRoutes);
-// Also mount direct endpoints as fallback to prevent any unhandled API endpoints from reaching Vite SPA middleware
-app.use("/telemetry", apiRoutes);
 
 // Strict safety boundary: Guarantee that any unhandled /api path returns JSON 404 and never falls through to Vite/SPA HTML
 app.all("/api/*", (_request, response) => {
@@ -80,7 +78,7 @@ if (process.env.NODE_ENV === "production") {
   if (fs.existsSync(distDir)) {
     app.use(express.static(distDir));
     app.get("*", (request, response) => {
-      if (request.path.startsWith("/api") || request.path.startsWith("/telemetry")) {
+      if (request.path.startsWith("/api")) {
         response.status(404).json({ error: "API route not found" });
         return;
       }
@@ -97,7 +95,7 @@ if (process.env.NODE_ENV === "production") {
       });
     });
     app.get("*", (request, response) => {
-      if (request.path.startsWith("/api") || request.path.startsWith("/telemetry")) {
+      if (request.path.startsWith("/api")) {
         response.status(404).json({ error: "API route not found" });
         return;
       }
