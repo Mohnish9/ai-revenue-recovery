@@ -9,9 +9,10 @@ import {
 } from "../services/telemetryService.js";
 import { getDetailedChannelReadiness } from "../services/providerService.js";
 
-export async function getTelemetryQueueController(_req: Request, res: Response): Promise<void> {
+export async function getTelemetryQueueController(req: Request, res: Response): Promise<void> {
   try {
-    const result = await getTelemetryDemoQueue();
+    const user = (req as any).user;
+    const result = await getTelemetryDemoQueue(user);
     res.json({
       success: true,
       data: result.queue,
@@ -26,7 +27,8 @@ export async function getTelemetryQueueController(_req: Request, res: Response):
 export async function getTelemetryRecordController(req: Request, res: Response): Promise<void> {
   try {
     const id = String(req.params.id);
-    const record = await getTelemetryRecordById(id);
+    const user = (req as any).user;
+    const record = await getTelemetryRecordById(id, user);
     if (!record) {
       res.status(404).json({ error: `Telemetry record ${id} not found` });
       return;
@@ -62,6 +64,7 @@ export async function createCustomTelemetryController(req: Request, res: Respons
       return;
     }
 
+    const user = (req as any).user;
     const record = await createCustomTelemetry({
       customerName,
       customerEmail,
@@ -75,7 +78,7 @@ export async function createCustomTelemetryController(req: Request, res: Respons
       sessionContext: sessionContext || {},
       historicalContext: historicalContext || {},
       notes,
-    });
+    }, user);
 
     res.status(201).json({ success: true, data: record });
   } catch (error: any) {
@@ -87,7 +90,8 @@ export async function createCustomTelemetryController(req: Request, res: Respons
 export async function analyzeTelemetryController(req: Request, res: Response): Promise<void> {
   try {
     const id = String(req.params.id);
-    const result = await analyzeTelemetryWithAI(id);
+    const user = (req as any).user;
+    const result = await analyzeTelemetryWithAI(id, user);
     res.json({
       success: true,
       message: `Gemini AI successfully diagnosed telemetry ${id} as ${result.analysis.detectedScenarioType}`,
@@ -99,10 +103,11 @@ export async function analyzeTelemetryController(req: Request, res: Response): P
   }
 }
 
-export async function resetTelemetryQueueController(_req: Request, res: Response): Promise<void> {
+export async function resetTelemetryQueueController(req: Request, res: Response): Promise<void> {
   try {
-    await resetTelemetryDemoQueue();
-    res.json({ success: true, message: "Telemetry demo queue reset to initial WAITING state." });
+    const user = (req as any).user;
+    await resetTelemetryDemoQueue(user);
+    res.json({ success: true, message: "Telemetry demo queue reset successfully." });
   } catch (error: any) {
     console.error("[TelemetryController] resetTelemetryQueue error:", error);
     res.status(500).json({ error: error.message || "Failed to reset telemetry queue" });
@@ -112,8 +117,9 @@ export async function resetTelemetryQueueController(_req: Request, res: Response
 export async function updateTelemetryContactController(req: Request, res: Response): Promise<void> {
   try {
     const id = String(req.params.id);
-    const { email, phone } = req.body;
-    const updated = await updateTelemetryOutreachContact(id, { email, phone });
+    const { email, phone, name } = req.body;
+    const user = (req as any).user;
+    const updated = await updateTelemetryOutreachContact(id, { email, phone, name }, user);
     res.json({
       success: true,
       message: `Outreach contact destination updated for telemetry ${id}`,
@@ -133,7 +139,6 @@ export async function getChannelReadinessController(req: Request, res: Response)
 
     const detailed = getDetailedChannelReadiness(email, phone, name);
 
-    // Provide clean structure matching detailed readiness (Email & Voice)
     res.json({
       success: true,
       data: {
@@ -169,4 +174,3 @@ export async function getChannelReadinessController(req: Request, res: Response)
     res.status(500).json({ error: error.message || "Failed to fetch channel readiness" });
   }
 }
-

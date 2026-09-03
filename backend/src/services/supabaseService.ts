@@ -1,4 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { canUserAccess } from "./dataAccessService.js";
+import type { UserProfile } from "./authService.js";
 
 const requiredEnvironment = ["SUPABASE_URL", "SUPABASE_SECRET_KEY"] as const;
 export const databaseTables = [
@@ -284,8 +286,12 @@ const mockAuth = {
   },
   getUser: async (token: string) => {
     if (!token) return { data: { user: null }, error: { message: "No token provided" } };
-    const userIdMatch = token.replace("mock_jwt_", "").replace("Bearer ", "");
-    const user = mockUsers.find((u) => u.id === userIdMatch) || mockUsers[0];
+    const cleanToken = token.replace(/^Bearer\s+/i, "").trim();
+    const userIdMatch = cleanToken.replace("mock_jwt_", "");
+    const user = mockUsers.find((u) => u.id === userIdMatch || u.email.toLowerCase() === userIdMatch.toLowerCase());
+    if (!user) {
+      return { data: { user: null }, error: { message: "User not found" } };
+    }
     return { data: { user }, error: null };
   },
   signOut: async () => {
@@ -436,7 +442,7 @@ function normalizeScenarioKey(raw?: string): string {
   return "INSUFFICIENT_FUNDS";
 }
 
-export async function getDashboardSummary() {
+export async function getDashboardSummary(user?: UserProfile) {
   const supabase = getSupabaseClient();
 
   // 1. Ensure Telemetry Demo Queue and Sandbox Store are hydrated from Supabase
@@ -477,11 +483,20 @@ export async function getDashboardSummary() {
     console.warn("[getDashboardSummary] Error querying Supabase tables:", err);
   }
 
+  // Filter db data by user access if user is authenticated
+  if (user) {
+    dbCases = dbCases.filter((c) => canUserAccess(user, c.owner_id));
+    dbIncidents = dbIncidents.filter((inc) => canUserAccess(user, inc.owner_id || inc.metadata?.owner_id));
+    dbTelemetry = dbTelemetry.filter((tel) => canUserAccess(user, tel.owner_id));
+    dbActions = dbActions.filter((act) => canUserAccess(user, act.owner_id));
+    dbAudit = dbAudit.filter((aud) => canUserAccess(user, aud.owner_id));
+  }
+
   // Also include in-memory sandbox incidents
   let memorySandbox: any[] = [];
   try {
     const { listSandboxIncidents } = await import("./operationsService.js");
-    memorySandbox = await listSandboxIncidents();
+    memorySandbox = await listSandboxIncidents(undefined, undefined, user);
   } catch {
     // Non-blocking
   }
@@ -724,8 +739,8 @@ export async function getDashboardSummary() {
   };
 }
 
-export async function getDebugRecoverySummary() {
-  const summary = await getDashboardSummary();
+export async function getDebugRecoverySummary(user?: UserProfile) {
+  const summary = await getDashboardSummary(user);
   const supabase = getSupabaseClient();
 
   const [{ count: totalTelemetry }, { count: analyzedTelemetry }] = await Promise.all([

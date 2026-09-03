@@ -49,6 +49,7 @@ import {
   takeOwnershipOfHumanEscalation,
   addNoteToHumanEscalation,
 } from "../services/operationsService.js";
+import { sendExotelSmsRecovery } from "../services/smsRecoveryService.js";
 
 function validateId(id: string) {
   if (!id || typeof id !== "string" || id.trim().length === 0) {
@@ -65,7 +66,7 @@ function getId(request: Request) {
 
 function sendError(response: Response, error: unknown) {
   const message = error instanceof Error ? error.message : "Unable to process recovery operation";
-  const status = message.includes("must be") || message.includes("not found") ? 400 : 500;
+  const status = message.includes("must be") || message.includes("not found") || message.includes("Unauthorized") ? (message.includes("Unauthorized") ? 403 : 400) : 500;
   response.status(status).json({ error: message });
 }
 
@@ -80,7 +81,8 @@ async function respondWithRecord(response: Response, record: unknown, name: stri
 export async function listCustomersController(request: Request, response: Response) {
   try {
     const search = typeof request.query.search === "string" ? request.query.search : undefined;
-    response.json(await listCustomers(parseLimit(request.query.limit), search));
+    const user = (request as any).user;
+    response.json(await listCustomers(parseLimit(request.query.limit), search, user));
   } catch (error) {
     sendError(response, error);
   }
@@ -89,7 +91,8 @@ export async function listCustomersController(request: Request, response: Respon
 export async function getCustomerController(request: Request, response: Response) {
   try {
     const id = getId(request);
-    await respondWithRecord(response, await getCustomer(id), "Customer");
+    const user = (request as any).user;
+    await respondWithRecord(response, await getCustomer(id, user), "Customer");
   } catch (error) {
     sendError(response, error);
   }
@@ -98,7 +101,8 @@ export async function getCustomerController(request: Request, response: Response
 export async function getCustomerOperationsController(request: Request, response: Response) {
   try {
     const id = getId(request);
-    await respondWithRecord(response, await getCustomerOperations(id, parseLimit(request.query.limit)), "Customer");
+    const user = (request as any).user;
+    await respondWithRecord(response, await getCustomerOperations(id, parseLimit(request.query.limit), user), "Customer");
   } catch (error) {
     sendError(response, error);
   }
@@ -108,7 +112,8 @@ export async function listTransactionsController(request: Request, response: Res
   try {
     const status = typeof request.query.status === "string" ? request.query.status : undefined;
     const paymentMethod = typeof request.query.payment_method === "string" ? request.query.payment_method : undefined;
-    response.json(await listTransactions(parseLimit(request.query.limit), status, paymentMethod));
+    const user = (request as any).user;
+    response.json(await listTransactions(parseLimit(request.query.limit), status, paymentMethod, user));
   } catch (error) {
     sendError(response, error);
   }
@@ -117,7 +122,8 @@ export async function listTransactionsController(request: Request, response: Res
 export async function getTransactionController(request: Request, response: Response) {
   try {
     const id = getId(request);
-    await respondWithRecord(response, await getTransaction(id), "Transaction");
+    const user = (request as any).user;
+    await respondWithRecord(response, await getTransaction(id, user), "Transaction");
   } catch (error) {
     sendError(response, error);
   }
@@ -126,7 +132,8 @@ export async function getTransactionController(request: Request, response: Respo
 export async function listInvoicesController(request: Request, response: Response) {
   try {
     const status = typeof request.query.status === "string" ? request.query.status : undefined;
-    response.json(await listInvoices(parseLimit(request.query.limit), status));
+    const user = (request as any).user;
+    response.json(await listInvoices(parseLimit(request.query.limit), status, user));
   } catch (error) {
     sendError(response, error);
   }
@@ -135,7 +142,8 @@ export async function listInvoicesController(request: Request, response: Respons
 export async function getInvoiceController(request: Request, response: Response) {
   try {
     const id = getId(request);
-    await respondWithRecord(response, await getInvoice(id), "Invoice");
+    const user = (request as any).user;
+    await respondWithRecord(response, await getInvoice(id, user), "Invoice");
   } catch (error) {
     sendError(response, error);
   }
@@ -144,7 +152,8 @@ export async function getInvoiceController(request: Request, response: Response)
 export async function listSubscriptionsController(request: Request, response: Response) {
   try {
     const status = typeof request.query.status === "string" ? request.query.status : undefined;
-    response.json(await listSubscriptions(parseLimit(request.query.limit), status));
+    const user = (request as any).user;
+    response.json(await listSubscriptions(parseLimit(request.query.limit), status, user));
   } catch (error) {
     sendError(response, error);
   }
@@ -153,7 +162,8 @@ export async function listSubscriptionsController(request: Request, response: Re
 export async function listPaymentEventsController(request: Request, response: Response) {
   try {
     const eventType = typeof request.query.event_type === "string" ? request.query.event_type : undefined;
-    response.json(await listPaymentEvents(parseLimit(request.query.limit), eventType));
+    const user = (request as any).user;
+    response.json(await listPaymentEvents(parseLimit(request.query.limit), eventType, user));
   } catch (error) {
     sendError(response, error);
   }
@@ -163,7 +173,8 @@ export async function listRecoveryCasesController(request: Request, response: Re
   try {
     const status = typeof request.query.status === "string" ? request.query.status : undefined;
     const priority = typeof request.query.priority === "string" ? request.query.priority : undefined;
-    response.json(await listRecoveryCases(parseLimit(request.query.limit), status, priority));
+    const user = (request as any).user;
+    response.json(await listRecoveryCases(parseLimit(request.query.limit), status, priority, user));
   } catch (error) {
     sendError(response, error);
   }
@@ -172,7 +183,8 @@ export async function listRecoveryCasesController(request: Request, response: Re
 export async function getRecoveryCaseController(request: Request, response: Response) {
   try {
     const id = getId(request);
-    await respondWithRecord(response, await getRecoveryCase(id), "Recovery case");
+    const user = (request as any).user;
+    await respondWithRecord(response, await getRecoveryCase(id, user), "Recovery case");
   } catch (error) {
     sendError(response, error);
   }
@@ -181,7 +193,8 @@ export async function getRecoveryCaseController(request: Request, response: Resp
 export async function listAllAuditLogsController(request: Request, response: Response) {
   try {
     const actorType = typeof request.query.actor_type === "string" ? request.query.actor_type : undefined;
-    response.json(await listAllAuditLogs(parseLimit(request.query.limit), actorType));
+    const user = (request as any).user;
+    response.json(await listAllAuditLogs(parseLimit(request.query.limit), actorType, user));
   } catch (error) {
     sendError(response, error);
   }
@@ -189,7 +202,8 @@ export async function listAllAuditLogsController(request: Request, response: Res
 
 export async function listAllAgentLogsController(request: Request, response: Response) {
   try {
-    response.json(await listAllAgentLogs(parseLimit(request.query.limit)));
+    const user = (request as any).user;
+    response.json(await listAllAgentLogs(parseLimit(request.query.limit), user));
   } catch (error) {
     sendError(response, error);
   }
@@ -247,7 +261,8 @@ export async function analyzeCaseAIController(request: Request, response: Respon
   try {
     const id = getId(request);
     const { user_instruction } = request.body || {};
-    const analysis = await analyzeRecoveryCaseWithAI(id, user_instruction);
+    const user = (request as any).user;
+    const analysis = await analyzeRecoveryCaseWithAI(id, user_instruction, user);
     response.json(analysis);
   } catch (error) {
     sendError(response, error);
@@ -261,7 +276,8 @@ export async function chatAIController(request: Request, response: Response) {
       response.status(400).json({ error: "message is required" });
       return;
     }
-    const reply = await chatWithRecoveryAI(message, case_id);
+    const user = (request as any).user;
+    const reply = await chatWithRecoveryAI(message, case_id, user);
     response.json(reply);
   } catch (error) {
     sendError(response, error);
@@ -293,10 +309,11 @@ export function simulateScenarioController(request: Request, response: Response)
   }
 }
 
-async function caseCollection(request: Request, response: Response, loader: (id: string, limit: number) => Promise<unknown[] | null>) {
+async function caseCollection(request: Request, response: Response, loader: (id: string, limit: number, user?: any) => Promise<unknown[] | null>) {
   try {
     const id = getId(request);
-    const records = await loader(id, parseLimit(request.query.limit));
+    const user = (request as any).user;
+    const records = await loader(id, parseLimit(request.query.limit), user);
     await respondWithRecord(response, records, "Recovery case");
   } catch (error) {
     sendError(response, error);
@@ -324,7 +341,8 @@ export async function createAndAnalyzeSandboxIncidentController(request: Request
       response.status(400).json({ error: "scenarioTypeKey is required" });
       return;
     }
-    const result = await createAndAnalyzeSandboxIncident(input);
+    const user = (request as any).user;
+    const result = await createAndAnalyzeSandboxIncident(input, user);
     response.status(201).json(result);
   } catch (error) {
     sendError(response, error);
@@ -378,12 +396,13 @@ export async function getDemoScenarioController(request: Request, response: Resp
 export async function listSandboxIncidentsController(request: Request, response: Response) {
   try {
     const { scenarioType, status, category, limit } = request.query;
+    const user = (request as any).user;
     const incidents = await listSandboxIncidents({
       scenarioType: typeof scenarioType === "string" ? scenarioType : undefined,
       status: typeof status === "string" ? status : undefined,
       category: typeof category === "string" ? category : undefined,
       limit: limit ? Number(limit) : undefined,
-    });
+    }, undefined, user);
     response.json(incidents);
   } catch (error) {
     sendError(response, error);
@@ -393,7 +412,8 @@ export async function listSandboxIncidentsController(request: Request, response:
 export async function getSandboxIncidentController(request: Request, response: Response) {
   try {
     const id = getId(request);
-    const incident = await getSandboxIncident(id);
+    const user = (request as any).user;
+    const incident = await getSandboxIncident(id, user);
     await respondWithRecord(response, incident, "Sandbox incident");
   } catch (error) {
     sendError(response, error);
@@ -407,7 +427,8 @@ export async function createSandboxIncidentController(request: Request, response
       response.status(400).json({ error: "scenarioTypeKey is required" });
       return;
     }
-    const result = await createSandboxIncident(input);
+    const user = (request as any).user;
+    const result = await createSandboxIncident(input, user);
     response.status(201).json(result);
   } catch (error) {
     sendError(response, error);
@@ -418,7 +439,8 @@ export async function analyzeSandboxIncidentController(request: Request, respons
   try {
     const id = getId(request);
     const { custom_instruction, customInstruction } = request.body || {};
-    const result = await analyzeSandboxIncidentWithAI(id, customInstruction || custom_instruction);
+    const user = (request as any).user;
+    const result = await analyzeSandboxIncidentWithAI(id, customInstruction || custom_instruction, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -433,12 +455,13 @@ export async function executeSandboxIncidentActionController(request: Request, r
       response.status(400).json({ error: "actionType is required" });
       return;
     }
+    const user = (request as any).user;
     const result = await executeSandboxIncidentAction(id, {
       actionType,
       strategyName,
       reason,
       operatorInfo,
-    });
+    }, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -448,7 +471,8 @@ export async function executeSandboxIncidentActionController(request: Request, r
 export async function deleteSandboxIncidentController(request: Request, response: Response) {
   try {
     const id = getId(request);
-    const result = await deleteSandboxIncident(id);
+    const user = (request as any).user;
+    const result = await deleteSandboxIncident(id, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -459,10 +483,11 @@ export async function reassessSandboxIncidentController(request: Request, respon
   try {
     const id = getId(request);
     const { customInstruction, custom_instruction, lastOutcomeNote } = request.body || {};
+    const user = (request as any).user;
     const result = await reassessSandboxIncidentWithAI(id, {
       customInstruction: customInstruction || custom_instruction,
       lastOutcomeNote,
-    });
+    }, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -473,10 +498,11 @@ export async function escalateSandboxIncidentController(request: Request, respon
   try {
     const id = getId(request);
     const { reason, operatorName } = request.body || {};
+    const user = (request as any).user;
     const result = await escalateSandboxIncidentToHuman(id, {
       reason,
       operatorName,
-    });
+    }, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -487,10 +513,11 @@ export async function executeAutonomousStepController(request: Request, response
   try {
     const id = getId(request);
     const { policyConfig, operatorInstruction } = request.body || {};
+    const user = (request as any).user;
     const result = await executeAutonomousLoopStep(id, {
       policyConfig,
       operatorInstruction,
-    });
+    }, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -501,10 +528,11 @@ export async function runFullAutonomousLoopController(request: Request, response
   try {
     const id = getId(request);
     const { policyConfig, operatorInstruction } = request.body || {};
+    const user = (request as any).user;
     const result = await runFullAutonomousLoop(id, {
       policyConfig,
       operatorInstruction,
-    });
+    }, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -515,7 +543,8 @@ export async function markSandboxIncidentPaidController(request: Request, respon
   try {
     const id = getId(request);
     const { operatorName } = request.body || {};
-    const result = markSandboxIncidentPaid(id, operatorName);
+    const user = (request as any).user;
+    const result = markSandboxIncidentPaid(id, operatorName, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -533,6 +562,10 @@ export async function customerResolveIncidentController(request: Request, respon
   }
 }
 
+/**
+ * Public portal endpoint for customers paying/resolving their incidents.
+ * Intentionally public so customer can open 1-click link from SMS/Email without operator login.
+ */
 export async function getPublicSandboxIncidentController(request: Request, response: Response) {
   try {
     const id = getId(request);
@@ -563,7 +596,8 @@ export async function getPublicSandboxIncidentController(request: Request, respo
 export async function triggerScheduledAttemptNowController(request: Request, response: Response) {
   try {
     const id = getId(request);
-    const result = await triggerScheduledAttemptNow(id);
+    const user = (request as any).user;
+    const result = await triggerScheduledAttemptNow(id, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -574,16 +608,18 @@ export async function cancelScheduledRecoveryController(request: Request, respon
   try {
     const id = getId(request);
     const { reason } = request.body || {};
-    const result = cancelScheduledRecovery(id, reason);
+    const user = (request as any).user;
+    const result = cancelScheduledRecovery(id, reason, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
   }
 }
 
-export async function listHumanEscalationsController(_request: Request, response: Response) {
+export async function listHumanEscalationsController(request: Request, response: Response) {
   try {
-    const result = await listHumanEscalations();
+    const user = (request as any).user;
+    const result = await listHumanEscalations(user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -594,12 +630,13 @@ export async function resolveHumanEscalationController(request: Request, respons
   try {
     const id = getId(request);
     const { resolutionType, notes, settlementAmount, operatorName } = request.body || {};
+    const user = (request as any).user;
     const result = await resolveHumanEscalation(id, {
       resolutionType,
       notes,
       settlementAmount: settlementAmount ? Number(settlementAmount) : undefined,
       operatorName,
-    });
+    }, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -610,7 +647,8 @@ export async function takeOwnershipOfHumanEscalationController(request: Request,
   try {
     const id = getId(request);
     const { operatorName } = request.body || {};
-    const result = await takeOwnershipOfHumanEscalation(id, operatorName);
+    const user = (request as any).user;
+    const result = await takeOwnershipOfHumanEscalation(id, operatorName, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
@@ -624,13 +662,39 @@ export async function addNoteToHumanEscalationController(request: Request, respo
     if (!note || typeof note !== "string" || !note.trim()) {
       return response.status(400).json({ error: "Note content is required." });
     }
-    const result = await addNoteToHumanEscalation(id, { note: note.trim(), operatorName });
+    const user = (request as any).user;
+    const result = await addNoteToHumanEscalation(id, { note: note.trim(), operatorName }, user);
     response.json(result);
   } catch (error) {
     sendError(response, error);
   }
 }
 
+/**
+ * Handles Exotel SMS dispatch for recovery cases and sandbox incidents.
+ * POST /api/recovery/send-sms or POST /api/operations/send-sms
+ */
+export async function sendSmsRecoveryController(request: Request, response: Response) {
+  try {
+    const { incidentId, id, toPhone, phone, customMessage, message, senderId, dltTemplateId, dltEntityId } = request.body || {};
+    const targetIncidentId = incidentId || id || request.params.id || "";
 
+    if (!targetIncidentId || typeof targetIncidentId !== "string" || !targetIncidentId.trim()) {
+      return response.status(400).json({ error: "incidentId is required to send recovery SMS." });
+    }
 
+    const user = (request as any).user;
+    const result = await sendExotelSmsRecovery({
+      incidentId: targetIncidentId.trim(),
+      toPhone: toPhone || phone,
+      customMessage: customMessage || message,
+      senderId,
+      dltTemplateId,
+      dltEntityId,
+    }, user);
 
+    response.json(result);
+  } catch (error) {
+    sendError(response, error);
+  }
+}

@@ -54,7 +54,6 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
   const [channelReadiness, setChannelReadiness] = useState<ChannelReadinessResponse | null>(null);
   const [showVerifyEmailModal, setShowVerifyEmailModal] = useState(false);
   const [showVerifyPhoneModal, setShowVerifyPhoneModal] = useState(false);
-  const [showJoinWhatsAppModal, setShowJoinWhatsAppModal] = useState(false);
 
   const loadQueue = async () => {
     try {
@@ -466,7 +465,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
               </span>
             </div>
             <p style={{ margin: "5px 0 0", fontSize: "12px", color: "#94a3b8" }}>
-              Recoverly executes real API calls to Resend and Twilio. Review carrier restrictions and open provider configuration below:
+              Recoverly executes real API calls across 3 official channels: Resend Email, Exotel Outbound Voice, and Exotel Official SMS.
             </p>
           </div>
 
@@ -494,14 +493,14 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
               <span>✉️ OPEN RESEND SETTINGS ↗</span>
             </a>
             <a
-              id="btn-verify-phone-top"
-              href="https://console.twilio.com/us1/develop/phone-numbers/manage/verified"
+              id="btn-open-exotel-console-top"
+              href="https://my.exotel.com"
               target="_blank"
               rel="noopener noreferrer"
               style={{
                 background: "#0f172a",
-                border: "1px solid #7c2d12",
-                color: "#fb923c",
+                border: "1px solid #1e3a5f",
+                color: "#2563eb",
                 padding: "6px 12px",
                 borderRadius: "6px",
                 fontSize: "11px",
@@ -513,29 +512,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                 cursor: "pointer",
               }}
             >
-              <span>📱 VERIFY PHONE IN TWILIO ↗</span>
-            </a>
-            <a
-              id="btn-join-whatsapp-top"
-              href="https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                background: "#0f172a",
-                border: "1px solid #064e3b",
-                color: "#4ade80",
-                padding: "6px 12px",
-                borderRadius: "6px",
-                fontSize: "11px",
-                fontWeight: 700,
-                textDecoration: "none",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "5px",
-                cursor: "pointer",
-              }}
-            >
-              <span>💬 OPEN TWILIO WHATSAPP SANDBOX ↗</span>
+              <span>📞 EXOTEL VOICE & SMS ↗</span>
             </a>
           </div>
         </div>
@@ -561,16 +538,16 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                 <span style={{ fontSize: "12px", fontWeight: 700, color: "#93c5fd", display: "flex", alignItems: "center", gap: "5px" }}>
                   <span>📧</span> EMAIL (Resend)
                 </span>
-                <span style={{ background: "rgba(251, 146, 60, 0.15)", color: "#fb923c", border: "1px solid rgba(251, 146, 60, 0.3)", padding: "1px 6px", borderRadius: "10px", fontSize: "10px", fontWeight: 700 }}>
-                  RESTRICTED — TEST SENDER
+                <span style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid rgba(56, 189, 248, 0.3)", padding: "1px 6px", borderRadius: "10px", fontSize: "10px", fontWeight: 700 }}>
+                  ACTIVE SENDER
                 </span>
               </div>
               <p style={{ fontSize: "11.5px", color: "#94a3b8", margin: 0, lineHeight: 1.4 }}>
-                Current Resend testing sender is not configured for arbitrary recipient addresses.
+                Dynamic recovery email dispatch with secure payment resolution link.
               </p>
             </div>
             <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "10.5px", color: "#64748b" }}>Provider: Resend</span>
+              <span style={{ fontSize: "10.5px", color: "#64748b" }}>Provider: Resend API</span>
               <a
                 id="link-open-resend-settings"
                 href="https://resend.com/domains"
@@ -590,17 +567,17 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                   gap: "4px",
                 }}
               >
-                OPEN RESEND SETTINGS →
+                RESEND SETTINGS →
               </a>
             </div>
           </div>
 
-          {/* SMS */}
+          {/* VOICE */}
           <div
-            id="channel-card-sms"
+            id="channel-card-voice"
             style={{
               background: "#0b1322",
-              border: "1px solid #451a03",
+              border: "1px solid #1e3a5f",
               borderRadius: "8px",
               padding: "14px 16px",
               display: "flex",
@@ -611,28 +588,28 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
           >
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                <span style={{ fontSize: "12px", fontWeight: 700, color: "#fdba74", display: "flex", alignItems: "center", gap: "5px" }}>
-                  <span>📱</span> SMS (Twilio Trial)
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#60a5fa", display: "flex", alignItems: "center", gap: "5px" }}>
+                  <span>📞</span> VOICE CALL (Exotel)
                 </span>
-                <span style={{ background: "rgba(251, 146, 60, 0.15)", color: "#fb923c", border: "1px solid rgba(251, 146, 60, 0.3)", padding: "1px 6px", borderRadius: "10px", fontSize: "10px", fontWeight: 700 }}>
-                  TRIAL RESTRICTED
+                <span style={{ background: "rgba(37, 99, 235, 0.15)", color: "#60a5fa", border: "1px solid rgba(37, 99, 235, 0.3)", padding: "1px 6px", borderRadius: "10px", fontSize: "10px", fontWeight: 700 }}>
+                  CALL FLOW READY
                 </span>
               </div>
               <p style={{ fontSize: "11.5px", color: "#94a3b8", margin: 0, lineHeight: 1.4 }}>
-                Twilio trial delivers to pre-verified Caller IDs only. Unverified numbers return Twilio code 21608.
+                Automated outbound recovery calls with dynamic speech audio and fallback recovery engine.
               </p>
             </div>
             <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "10.5px", color: "#fb923c" }}>Code 21608 guardrail</span>
+              <span style={{ fontSize: "10.5px", color: "#60a5fa" }}>Provider: Exotel Flow</span>
               <a
-                id="link-verify-phone-twilio"
-                href="https://console.twilio.com/us1/develop/phone-numbers/manage/verified"
+                id="link-open-exotel-voice"
+                href="https://my.exotel.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{
-                  background: "rgba(251, 146, 60, 0.12)",
-                  border: "1px solid rgba(251, 146, 60, 0.3)",
-                  color: "#fb923c",
+                  background: "rgba(37, 99, 235, 0.12)",
+                  border: "1px solid rgba(37, 99, 235, 0.3)",
+                  color: "#60a5fa",
                   fontSize: "11px",
                   fontWeight: 700,
                   padding: "4px 8px",
@@ -643,14 +620,14 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                   gap: "4px",
                 }}
               >
-                VERIFY PHONE IN TWILIO →
+                EXOTEL FLOWS →
               </a>
             </div>
           </div>
 
-          {/* WHATSAPP */}
+          {/* SMS */}
           <div
-            id="channel-card-whatsapp"
+            id="channel-card-sms"
             style={{
               background: "#0b1322",
               border: "1px solid #064e3b",
@@ -665,21 +642,21 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
                 <span style={{ fontSize: "12px", fontWeight: 700, color: "#86efac", display: "flex", alignItems: "center", gap: "5px" }}>
-                  <span>💬</span> WHATSAPP (Twilio Sandbox)
+                  <span>💬</span> SMS (Exotel API)
                 </span>
                 <span style={{ background: "rgba(34, 197, 94, 0.15)", color: "#4ade80", border: "1px solid rgba(34, 197, 94, 0.3)", padding: "1px 6px", borderRadius: "10px", fontSize: "10px", fontWeight: 700 }}>
-                  SANDBOX RESTRICTED
+                  OFFICIAL SMS READY
                 </span>
               </div>
               <p style={{ fontSize: "11.5px", color: "#94a3b8", margin: 0, lineHeight: 1.4 }}>
-                Join this WhatsApp Sandbox with the test phone number before starting WhatsApp recovery.
+                Direct SMS recovery dispatch using Exotel SMS API with DLT template compliance.
               </p>
             </div>
             <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "10.5px", color: "#4ade80" }}>Sandbox keyword join</span>
+              <span style={{ fontSize: "10.5px", color: "#4ade80" }}>Provider: Exotel SMS</span>
               <a
-                id="link-open-whatsapp-sandbox"
-                href="https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn"
+                id="link-open-exotel-sms"
+                href="https://my.exotel.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{
@@ -696,7 +673,7 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
                   gap: "4px",
                 }}
               >
-                OPEN TWILIO WHATSAPP SANDBOX →
+                EXOTEL CONSOLE →
               </a>
             </div>
           </div>
@@ -1901,116 +1878,6 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
               </a>
               <button
                 onClick={() => setShowVerifyPhoneModal(false)}
-                style={{
-                  background: "#38bdf8",
-                  border: "none",
-                  color: "#0f172a",
-                  padding: "8px 18px",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 3: Twilio WhatsApp Sandbox Setup */}
-      {showJoinWhatsAppModal && (
-        <div
-          id="modal-join-whatsapp"
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0, 0, 0, 0.75)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 9999,
-            padding: "20px",
-          }}
-        >
-          <div
-            style={{
-              background: "#0b1329",
-              border: "1px solid #1e3a5f",
-              borderRadius: "12px",
-              width: "100%",
-              maxWidth: "560px",
-              padding: "24px",
-              boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span style={{ fontSize: "20px" }}>💬</span>
-                <h3 style={{ margin: 0, fontSize: "16px", color: "#f8fafc", fontWeight: 700 }}>
-                  Twilio WhatsApp Sandbox Setup
-                </h3>
-              </div>
-              <button
-                onClick={() => setShowJoinWhatsAppModal(false)}
-                style={{ background: "transparent", border: "none", color: "#94a3b8", fontSize: "18px", cursor: "pointer" }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={{ background: "rgba(34, 197, 94, 0.1)", border: "1px solid rgba(34, 197, 94, 0.3)", borderRadius: "8px", padding: "12px 16px", marginBottom: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                <span style={{ color: "#4ade80", fontWeight: 700 }}>WhatsApp Sandbox Rule</span>
-                <span style={{ fontSize: "11px", background: "#166534", color: "#dcfce7", padding: "1px 6px", borderRadius: "10px" }}>CODE 63015</span>
-              </div>
-              <p style={{ margin: 0, fontSize: "12px", color: "#cbd5e1", lineHeight: 1.5 }}>
-                Meta & Twilio Sandbox require inbound opt-in before allowing outbound template/freeform messages. If the recipient has not joined the sandbox, Twilio returns:
-                <code style={{ display: "block", background: "#020617", padding: "4px 8px", borderRadius: "4px", color: "#fca5a5", marginTop: "6px", fontFamily: "monospace", fontSize: "11px" }}>
-                  Twilio Error 63015: Channel could not find a To address. Recipient has not joined the sandbox.
-                </code>
-              </p>
-            </div>
-
-            <div style={{ fontSize: "12.5px", color: "#94a3b8", lineHeight: 1.6, marginBottom: "20px" }}>
-              <strong style={{ color: "#e2e8f0", display: "block", marginBottom: "6px" }}>
-                To receive real WhatsApp messages on your phone:
-              </strong>
-              <ol style={{ margin: 0, paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "6px" }}>
-                <li>Open WhatsApp on your phone and start a chat with <strong>+1 415 523 8886</strong>.</li>
-                <li>Send your Twilio Sandbox join keyword (e.g. <code>join &lt;your-sandbox-word&gt;</code>).</li>
-                <li>Twilio will reply: <em>"You are all set! The sandbox is now connected."</em></li>
-                <li>Click <strong>✏️ (pencil icon)</strong> on any waiting signal row, enter your phone number, and start AI analysis!</li>
-              </ol>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-              <a
-                href="https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  background: "#0f172a",
-                  border: "1px solid #064e3b",
-                  color: "#4ade80",
-                  padding: "8px 16px",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  textDecoration: "none",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                }}
-              >
-                OPEN TWILIO WHATSAPP SANDBOX ↗
-              </a>
-              <button
-                onClick={() => setShowJoinWhatsAppModal(false)}
                 style={{
                   background: "#38bdf8",
                   border: "none",

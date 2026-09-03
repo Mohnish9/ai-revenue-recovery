@@ -846,7 +846,7 @@ export interface TelemetryAIAnalysis {
   reasoning: string;
   revenueAtRisk: number;
   recommendedStrategy: string;
-  recommendedChannel: "EMAIL" | "WHATSAPP" | "SMS";
+  recommendedChannel: "EMAIL" | "VOICE" | "SMS";
   explanation: string;
   modelName: string;
   createdAt: string;
@@ -878,7 +878,7 @@ export interface EscalationAttemptRecord {
   attemptNumber: number;
   actionTitle: string;
   actionType: string;
-  channel: "WHATSAPP" | "EMAIL" | "SMS" | string;
+  channel: "VOICE" | "EMAIL" | "SMS" | string;
   strategy: string;
   status: "SENT" | "FAILED" | "DELIVERED" | "SIMULATED";
   provider: string;
@@ -948,21 +948,22 @@ export interface DetailedChannelReadinessData {
     actionLabel: string;
     actionUrl: string;
   };
-  phone: {
-    phone_verification_status: "VERIFIED" | "NOT_VERIFIED";
-    twilio_sms_status: "READY" | "TRIAL_RESTRICTED" | "FAILED" | "UNCONFIGURED";
-    ownershipLabel: string;
-    smsLabel: string;
+  voice: {
+    status: "READY" | "FAILED" | "UNCONFIGURED";
+    deliveryLabel: string;
+    exoPhone: string;
     details: string;
     actionLabel: string;
+    actionUrl: string;
   };
-  whatsapp: {
-    whatsapp_sandbox_status: "CONNECTED" | "NOT_CONNECTED" | "READY" | "UNCONFIGURED";
-    sandboxNumber: string;
-    joinKeyword: string;
-    deepLink: string;
+  sms: {
+    status: "READY" | "FAILED" | "UNCONFIGURED";
+    deliveryLabel: string;
+    senderId: string;
+    dltConfigured: boolean;
     details: string;
     actionLabel: string;
+    actionUrl: string;
   };
   preflightPassed: boolean;
   preflightSummary: string;
@@ -980,29 +981,23 @@ export interface ChannelReadinessResponse extends Partial<DetailedChannelReadine
     isResendTestingDomain?: boolean;
     isDeliverableToRecipient?: boolean;
   };
-  twilioSms?: {
+  exotel?: {
     configured: boolean;
-    accountSidPresent: boolean;
-    fromNumber: string;
-    mode: "TRIAL" | "UPGRADED";
+    sidPresent: boolean;
+    exoPhone: string;
     status: string;
-    phone_verification_status?: string;
     deliveryLabel: string;
     details: string;
-    errorCodeDoc?: string;
     actionLabel: string;
   };
-  twilioWhatsApp?: {
+  exotelSms?: {
     configured: boolean;
-    accountSidPresent: boolean;
-    fromNumber: string;
-    sandboxNumber: string;
+    sidPresent: boolean;
+    senderId: string;
+    dltConfigured: boolean;
     status: string;
-    whatsapp_sandbox_status?: string;
     deliveryLabel: string;
     details: string;
-    joinKeyword: string;
-    deepLink?: string;
     actionLabel: string;
   };
   defaultTestContact?: {

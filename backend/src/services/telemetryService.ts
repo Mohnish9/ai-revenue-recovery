@@ -1,5 +1,7 @@
 import { getSupabaseClient } from "./supabaseService.js";
 import { generateContentResilient } from "./geminiService.js";
+import { canUserAccess, isMohnishUser, getOwnerIdForUser } from "./dataAccessService.js";
+import type { UserProfile } from "./authService.js";
 import {
   createSandboxIncident,
   persistentSandboxIncidents,
@@ -17,6 +19,7 @@ export interface RawTelemetryEvent {
 
 export interface SyntheticTelemetryRecord {
   id: string;
+  owner_id?: string;
   batchNumber: number;
   title: string;
   customerId: string;
@@ -62,7 +65,7 @@ export interface TelemetryAIAnalysis {
   reasoning: string;
   revenueAtRisk: number;
   recommendedStrategy: string;
-  recommendedChannel: "EMAIL" | "VOICE";
+  recommendedChannel: "EMAIL" | "VOICE" | "SMS";
   explanation: string;
   modelName: string;
   createdAt: string;
@@ -112,7 +115,7 @@ const memoryProcessingRuns = new Map<string, any>();
 let isQueueInitialized = false;
 
 // 40 deterministic synthetic demo telemetry records generator
-function generateSyntheticTelemetryDataset(): {
+function generateSyntheticTelemetryDataset(ownerId = "usr_demo_001"): {
   records: SyntheticTelemetryRecord[];
   groundTruths: TelemetryGroundTruth[];
 } {
@@ -350,6 +353,7 @@ function generateSyntheticTelemetryDataset(): {
 
     const record: SyntheticTelemetryRecord = {
       id,
+      owner_id: ownerId,
       batchNumber: i,
       title: `Customer Event Batch ${padIndex}`,
       customerId: `syn_cust_${padIndex}`,
@@ -622,8 +626,8 @@ export async function initializeTelemetryDemoQueue(): Promise<void> {
   isQueueInitialized = true;
 }
 
-// Get full demo queue with dynamic summary
-export async function getTelemetryDemoQueue(): Promise<{
+// Get full demo queue with dynamic summary and user-level data isolation
+export async function getTelemetryDemoQueue(user?: UserProfile): Promise<{
   queue: Array<SyntheticTelemetryRecord & {
     aiAnalysis?: TelemetryAIAnalysis | null;
     evaluation?: DetectionEvaluation | null;
@@ -633,7 +637,8 @@ export async function getTelemetryDemoQueue(): Promise<{
 }> {
   await initializeTelemetryDemoQueue();
 
-  const records = Array.from(memoryTelemetryRecords.values()).sort((a, b) => a.batchNumber - b.batchNumber);
+  const allRecords = Array.from(memoryTelemetryRecords.values()).sort((a, b) => a.batchNumber - b.batchNumber);
+  const records = user ? allRecords.filter((rec) => canUserAccess(user, rec.owner_id)) : allRecords;
 
   let waitingCount = 0;
   let analyzedCount = 0;
@@ -696,11 +701,14 @@ export async function getTelemetryDemoQueue(): Promise<{
   };
 }
 
-// Get single telemetry item by ID
-export async function getTelemetryRecordById(id: string) {
+// Get single telemetry item by ID with ownership authorization check
+export async function getTelemetryRecordById(id: string, user?: UserProfile) {
   await initializeTelemetryDemoQueue();
   const record = memoryTelemetryRecords.get(id);
   if (!record) return null;
+  if (user && !canUserAccess(user, record.owner_id)) {
+    return null;
+  }
 
   const aiAnalysis = memoryAIAnalyses.get(id) || null;
   const evaluation = memoryEvaluations.get(id) || null;
@@ -717,7 +725,7 @@ export async function getTelemetryRecordById(id: string) {
   };
 }
 
-// Create a custom raw telemetry dataset
+// Create a custom raw telemetry dataset tagged with user owner_id
 export async function createCustomTelemetry(input: {
   customerName: string;
   customerEmail?: string;
@@ -731,14 +739,16 @@ export async function createCustomTelemetry(input: {
   sessionContext?: Record<string, any>;
   historicalContext?: Record<string, any>;
   notes?: string;
-}): Promise<SyntheticTelemetryRecord> {
+}, user?: UserProfile): Promise<SyntheticTelemetryRecord> {
   await initializeTelemetryDemoQueue();
 
   const nextBatch = memoryTelemetryRecords.size + 1;
   const id = `TEL-CUSTOM-${Date.now().toString().slice(-4)}`;
+  const ownerId = getOwnerIdForUser(user);
 
   const record: SyntheticTelemetryRecord = {
     id,
+    owner_id: ownerId,
     batchNumber: nextBatch,
     title: `Custom Telemetry Signal #${nextBatch.toString().padStart(2, "0")}`,
     customerId: `cust_custom_${Date.now()}`,
@@ -935,13 +945,17 @@ function analyzeTelemetryWithHeuristicRules(record: SyntheticTelemetryRecord): {
 // Update editable outreach destination contact prior to starting AI analysis
 export async function updateTelemetryOutreachContact(
   telemetryId: string,
-  contact: { email?: string; phone?: string; name?: string }
+  contact: { email?: string; phone?: string; name?: string },
+  user?: UserProfile
 ): Promise<SyntheticTelemetryRecord> {
   await initializeTelemetryDemoQueue();
 
   const record = memoryTelemetryRecords.get(telemetryId);
   if (!record) {
     throw new Error(`Synthetic telemetry record not found: ${telemetryId}`);
+  }
+  if (user && !canUserAccess(user, record.owner_id)) {
+    throw new Error(`Unauthorized: You do not have access to this telemetry signal.`);
   }
 
   const cleanName = contact.name?.trim() || "";
@@ -1003,7 +1017,7 @@ export async function updateTelemetryOutreachContact(
 }
 
 // MAIN GEMINI DETECTION ENDPOINT: Analyzes raw telemetry without ground truth knowledge
-export async function analyzeTelemetryWithAI(telemetryId: string): Promise<{
+export async function analyzeTelemetryWithAI(telemetryId: string, user?: UserProfile): Promise<{
   telemetry: SyntheticTelemetryRecord;
   analysis: TelemetryAIAnalysis;
   evaluation: DetectionEvaluation;
@@ -1014,6 +1028,9 @@ export async function analyzeTelemetryWithAI(telemetryId: string): Promise<{
   const record = memoryTelemetryRecords.get(telemetryId);
   if (!record) {
     throw new Error(`Synthetic telemetry record not found: ${telemetryId}`);
+  }
+  if (user && !canUserAccess(user, record.owner_id)) {
+    throw new Error(`Unauthorized: You do not have access to this telemetry signal.`);
   }
 
   // Idempotency: If incident is already created for this record, return it to prevent duplicate cases
@@ -1207,7 +1224,7 @@ Respond strictly in valid JSON matching this schema:
     customInstruction: `Autonomous Recovery for ${record.title} (${analysis.detectedScenarioType}). Strategy: ${analysis.recommendedStrategy}`,
   };
 
-  const createdIncidentResult = await createSandboxIncident(incidentPayload);
+  const createdIncidentResult = await createSandboxIncident(incidentPayload, user);
   const createdIncidentId = createdIncidentResult.incident.id;
 
   // Link incident ID and update telemetry status
@@ -1289,27 +1306,53 @@ Respond strictly in valid JSON matching this schema:
   };
 }
 
-// Reset demo queue to initial WAITING state for re-running judge demonstrations
-export async function resetTelemetryDemoQueue(): Promise<void> {
-  const dataset = generateSyntheticTelemetryDataset();
-  memoryTelemetryRecords.clear();
-  memoryGroundTruth.clear();
-  for (const rec of dataset.records) {
-    memoryTelemetryRecords.set(rec.id, rec);
-  }
-  for (const gt of dataset.groundTruths) {
-    memoryGroundTruth.set(gt.telemetryId, gt);
-  }
+// Reset demo queue to initial WAITING state for re-running demonstrations
+export async function resetTelemetryDemoQueue(user?: UserProfile): Promise<void> {
+  const isMohnish = isMohnishUser(user);
+  const ownerId = getOwnerIdForUser(user);
 
-  memoryAIAnalyses.clear();
-  memoryEvaluations.clear();
-  memoryProcessingRuns.clear();
+  const dataset = generateSyntheticTelemetryDataset(ownerId);
+
+  // If user is Mohnish, reset demo pool
+  if (isMohnish || !user) {
+    memoryTelemetryRecords.clear();
+    memoryGroundTruth.clear();
+    for (const rec of dataset.records) {
+      memoryTelemetryRecords.set(rec.id, rec);
+    }
+    for (const gt of dataset.groundTruths) {
+      memoryGroundTruth.set(gt.telemetryId, gt);
+    }
+    memoryAIAnalyses.clear();
+    memoryEvaluations.clear();
+    memoryProcessingRuns.clear();
+  } else {
+    // For other authenticated users, remove their existing records and insert their fresh 40-item batch
+    for (const [key, rec] of memoryTelemetryRecords.entries()) {
+      if (rec.owner_id === user.id) {
+        memoryTelemetryRecords.delete(key);
+        memoryAIAnalyses.delete(key);
+        memoryEvaluations.delete(key);
+      }
+    }
+    for (const rec of dataset.records) {
+      const userRecId = `TEL-${user.id.slice(-4)}-${rec.batchNumber.toString().padStart(2, "0")}`;
+      const tailoredRec = {
+        ...rec,
+        id: userRecId,
+        owner_id: user.id,
+      };
+      memoryTelemetryRecords.set(userRecId, tailoredRec);
+    }
+  }
 
   const supabase = getSupabaseClient();
   try {
     for (const rec of dataset.records) {
+      const recId = isMohnish || !user ? rec.id : `TEL-${user.id.slice(-4)}-${rec.batchNumber.toString().padStart(2, "0")}`;
       await supabase.from("synthetic_telemetry_records").upsert({
-        id: rec.id,
+        id: recId,
+        owner_id: ownerId,
         batch_number: rec.batchNumber,
         title: rec.title,
         customer_id: rec.customerId,
@@ -1330,20 +1373,6 @@ export async function resetTelemetryDemoQueue(): Promise<void> {
         updated_at: rec.updatedAt,
       }, { onConflict: "id" });
     }
-
-    for (const gt of dataset.groundTruths) {
-      await supabase.from("telemetry_ground_truth").upsert({
-        id: gt.id,
-        telemetry_id: gt.telemetryId,
-        expected_scenario_type: gt.expectedScenarioType,
-        expected_category: gt.expectedCategory,
-        description: gt.description,
-        created_at: gt.createdAt,
-      }, { onConflict: "id" });
-    }
-
-    await supabase.from("telemetry_ai_analyses").delete().neq("id", "none");
-    await supabase.from("detection_evaluations").delete().neq("id", "none");
   } catch (e) {
     // Non-blocking
   }

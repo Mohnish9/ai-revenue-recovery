@@ -9,6 +9,8 @@ import {
   dispatchExotelVoiceCall,
   getOrGenerateVoiceRecoveryMessage,
 } from "./voiceRecoveryService.js";
+import { sendExotelSmsRecovery } from "./smsRecoveryService.js";
+import { UserProfile, canUserAccess } from "./dataAccessService.js";
 
 export interface StoredActionRecord {
   id: string;
@@ -127,6 +129,7 @@ export interface StoredSandboxIncident {
   last_voice_script_at?: string;
   escalationDossier?: any;
   recoveryDossier?: any;
+  owner_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -309,10 +312,11 @@ export async function executeScheduledAttempt(incidentId: string, attemptNumber:
     // Attempt #1 → EMAIL (Resend)
     // Attempt #2 → VOICE (Exotel)
     // Attempt #3 → EMAIL (Resend follow-up)
-    const chosenChannel: "EMAIL" | "VOICE" =
+    const chosenChannel = (
       attemptNumber === 1 ? "EMAIL" :
       attemptNumber === 2 ? "VOICE" :
-      "EMAIL";
+      "EMAIL"
+    ) as "EMAIL" | "VOICE" | "SMS";
 
     const expectedProvider = chosenChannel === "EMAIL" ? "RESEND" : "EXOTEL";
 
@@ -588,6 +592,32 @@ Respond strictly in valid JSON matching this schema:
         paymentUrl,
       });
       channelDispatches.push(primaryDispatch);
+    } else if (chosenChannel === "SMS") {
+      // SMS (Exotel SMS)
+      const smsRes = await sendExotelSmsRecovery({
+        incidentId: item.id,
+        toPhone: item.customer_phone,
+      });
+      primaryDispatch = {
+        channel: "SMS",
+        provider: "EXOTEL",
+        deliveryMode: smsRes.isRealDispatch ? (smsRes.status === "SENT" ? "REAL" : "FAILED") : "SIMULATED",
+        status: smsRes.status === "SENT" ? "SENT" : "FAILED",
+        deliveryLabel: smsRes.deliveryLabel,
+        isRealDispatch: smsRes.isRealDispatch,
+        destination: smsRes.destination,
+        actualDestination: smsRes.actualDestination,
+        routedToTestContact: smsRes.routedToTestContact,
+        providerMessageId: smsRes.messageSid,
+        providerStatus: smsRes.providerStatus,
+        providerErrorCode: smsRes.error ? "EXOTEL_SMS_REJECTED" : undefined,
+        providerErrorMessage: smsRes.error,
+        content: {
+          body: smsRes.body,
+        },
+        dispatchedAt: smsRes.dispatchedAt,
+      };
+      channelDispatches.push(primaryDispatch);
     } else {
       // VOICE (Exotel)
       const voiceRes = await dispatchExotelVoiceCall(item.id, { skipActionPush: true });
@@ -803,9 +833,9 @@ Respond strictly in valid JSON matching this schema:
   }
 }
 
-export function markSandboxIncidentPaid(incidentId: string, operatorName = "Operator") {
+export function markSandboxIncidentPaid(incidentId: string, operatorName = "Operator", user?: UserProfile) {
   const item = persistentSandboxIncidents.get(incidentId);
-  if (!item) {
+  if (!item || !canUserAccess(user, item.owner_id)) {
     throw new Error(`Sandbox incident ${incidentId} not found`);
   }
 
@@ -959,9 +989,9 @@ export function customerResolveIncident(
   return mapStoredIncidentToResponse(item);
 }
 
-export async function triggerScheduledAttemptNow(incidentId: string) {
+export async function triggerScheduledAttemptNow(incidentId: string, user?: UserProfile) {
   const item = persistentSandboxIncidents.get(incidentId);
-  if (!item) {
+  if (!item || !canUserAccess(user, item.owner_id)) {
     throw new Error(`Sandbox incident ${incidentId} not found`);
   }
 
@@ -974,9 +1004,9 @@ export async function triggerScheduledAttemptNow(incidentId: string) {
   return await executeScheduledAttempt(incidentId, attemptNumber);
 }
 
-export function cancelScheduledRecovery(incidentId: string, reason = "Cancelled by operator") {
+export function cancelScheduledRecovery(incidentId: string, reason = "Cancelled by operator", user?: UserProfile) {
   const item = persistentSandboxIncidents.get(incidentId);
-  if (!item) {
+  if (!item || !canUserAccess(user, item.owner_id)) {
     throw new Error(`Sandbox incident ${incidentId} not found`);
   }
 

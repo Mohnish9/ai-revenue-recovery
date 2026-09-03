@@ -325,7 +325,7 @@ export function CaseDetailDrawer({ caseId, onClose, onUpdated }: CaseDetailDrawe
 
                     {aiAnalysis.tailoredMessageDraft && (
                       <div style={{ background: "#0b171e", padding: "10px", borderRadius: "6px", borderLeft: "3px solid #d8ee9b" }}>
-                        <div style={{ color: "#94a3b8", fontSize: "9.5px", marginBottom: "4px", textTransform: "uppercase" }}>Generated Outreach Copy (WhatsApp/SMS)</div>
+                        <div style={{ color: "#94a3b8", fontSize: "9.5px", marginBottom: "4px", textTransform: "uppercase" }}>Generated Outreach Copy (SMS / Voice Script)</div>
                         <div style={{ color: "#e2e8f0", fontSize: "11px", fontStyle: "italic" }}>"{aiAnalysis.tailoredMessageDraft}"</div>
                       </div>
                     )}
@@ -354,7 +354,7 @@ export function CaseDetailDrawer({ caseId, onClose, onUpdated }: CaseDetailDrawe
                     >
                       <option value="SEND_PAYMENT_LINK">SEND_PAYMENT_LINK (Generate 48h smart checkout link)</option>
                       <option value="RETRY_PAYMENT">RETRY_PAYMENT (Trigger auto-retry cascade)</option>
-                      <option value="SEND_REMINDER">SEND_REMINDER (Email + WhatsApp reminder)</option>
+                      <option value="SEND_REMINDER">SEND_REMINDER (Email + SMS reminder)</option>
                       <option value="REQUEST_PAYMENT_METHOD_UPDATE">REQUEST_PAYMENT_METHOD_UPDATE (Card/UPI prompt)</option>
                       <option value="SCHEDULE_RETRY">SCHEDULE_RETRY (Schedule for optimal salary window)</option>
                       <option value="ESCALATE">ESCALATE (Escalate to operations lead)</option>
@@ -367,7 +367,7 @@ export function CaseDetailDrawer({ caseId, onClose, onUpdated }: CaseDetailDrawe
                       type="text"
                       className="search-input"
                       style={{ width: "100%" }}
-                      placeholder="e.g. Dispatched via WhatsApp with UPI instant intent link"
+                      placeholder="e.g. Dispatched recovery outreach with payment link"
                       value={actionReason}
                       onChange={(e) => setActionReason(e.target.value)}
                     />

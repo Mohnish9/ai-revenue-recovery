@@ -6,6 +6,8 @@ import {
   cancelScheduledRecoveryApi,
   deleteSandboxIncidentApi,
   fetchDemoTestContactApi,
+  sendSmsRecoveryApi,
+  dispatchVoiceCallApi,
   type DemoTestContactConfig,
 } from "../lib/api";
 import { DemoTestContactModal } from "./DemoTestContactModal";
@@ -26,7 +28,7 @@ export function AutonomousRecoveryWorkspace({
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"DECISION_TRACE" | "OUTREACH" | "PROVIDER_DEBUG" | "TIMELINE" | "AI_REASONING" | "CONTEXT">("DECISION_TRACE");
-  const [selectedChannel, setSelectedChannel] = useState<"EMAIL" | "VOICE">("EMAIL");
+  const [selectedChannel, setSelectedChannel] = useState<"EMAIL" | "VOICE" | "SMS">("EMAIL");
   const [copiedLink, setCopiedLink] = useState(false);
   const [testContactModalOpen, setTestContactModalOpen] = useState(false);
   const [testContactConfig, setTestContactConfig] = useState<DemoTestContactConfig | null>(null);
@@ -58,6 +60,7 @@ export function AutonomousRecoveryWorkspace({
     if (latestAction?.selectedChannel) {
       const ch = String(latestAction.selectedChannel).toUpperCase();
       if (ch.includes("VOICE")) setSelectedChannel("VOICE");
+      else if (ch.includes("SMS")) setSelectedChannel("SMS");
       else if (ch.includes("EMAIL")) setSelectedChannel("EMAIL");
     }
   }, [latestAction?.selectedChannel]);
@@ -182,11 +185,56 @@ export function AutonomousRecoveryWorkspace({
   // Get channel dispatches from latest action
   const voiceDispatch = latestChannelDispatches.find((c) => c.channel === "VOICE");
   const emailDispatch = latestChannelDispatches.find((c) => c.channel === "EMAIL");
+  const smsDispatch = latestChannelDispatches.find((c) => c.channel === "SMS");
 
   const customerName = incident.customer.name;
   const customerEmail = incident.customer.email;
   const customerPhone = (incident.customer as any).phone || incident.incident.customer_phone || "+91 94176 75967";
   const analysis = incident.analysis;
+
+  const handleSendManualSms = async () => {
+    try {
+      setLoadingAction("SEND_SMS");
+      setActionNotice(`Dispatching recovery SMS to ${customerPhone} via Exotel API...`);
+      const res = await sendSmsRecoveryApi({
+        incidentId: incident.incident.id,
+        toPhone: customerPhone,
+      });
+      if (res.success) {
+        setActionNotice(`✅ SMS dispatched successfully! SID / ID: ${res.data?.providerMessageId || "OK"}`);
+        const fresh = await fetchSandboxIncidentApi(incident.incident.id);
+        if (fresh) onIncidentUpdate(fresh);
+      } else {
+        alert(`SMS dispatch error: ${res.message}`);
+      }
+    } catch (err: any) {
+      alert(`SMS dispatch failed: ${err.message}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleManualVoiceCall = async () => {
+    try {
+      setLoadingAction("VOICE_CALL");
+      setActionNotice(`Initiating outbound voice call to ${customerPhone} via Exotel...`);
+      const res = await dispatchVoiceCallApi({
+        incidentId: incident.incident.id,
+        destinationPhone: customerPhone,
+      });
+      if (res.success) {
+        setActionNotice(`✅ Outbound call initiated! SID: ${res.callSid || "Dispatched"} (Mode: ${res.deliveryMode || "REAL"})`);
+        const fresh = await fetchSandboxIncidentApi(incident.incident.id);
+        if (fresh) onIncidentUpdate(fresh);
+      } else {
+        alert(`Voice call error: ${res.message}`);
+      }
+    } catch (err: any) {
+      alert(`Voice call failed: ${err.message}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -934,12 +982,11 @@ export function AutonomousRecoveryWorkspace({
       {activeTab === "OUTREACH" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {/* Channel Selector Pills */}
-          <div style={{ display: "flex", gap: "10px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px" }}>
             <button
               onClick={() => setSelectedChannel("EMAIL")}
               style={{
-                flex: 1,
-                padding: "12px 16px",
+                padding: "12px 14px",
                 borderRadius: "10px",
                 border: selectedChannel === "EMAIL" ? "2px solid #8b5cf6" : "1px solid #e2e8f0",
                 background: selectedChannel === "EMAIL" ? "#f5f3ff" : "#ffffff",
@@ -962,8 +1009,7 @@ export function AutonomousRecoveryWorkspace({
             <button
               onClick={() => setSelectedChannel("VOICE")}
               style={{
-                flex: 1,
-                padding: "12px 16px",
+                padding: "12px 14px",
                 borderRadius: "10px",
                 border: selectedChannel === "VOICE" ? "2px solid #2563eb" : "1px solid #e2e8f0",
                 background: selectedChannel === "VOICE" ? "#eff6ff" : "#ffffff",
@@ -978,7 +1024,30 @@ export function AutonomousRecoveryWorkspace({
               <div>
                 <div style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>Voice Call (Exotel)</div>
                 <div style={{ fontSize: "11px", color: voiceDispatch?.status === "SENT" ? "#2563eb" : voiceDispatch?.status === "FAILED" ? "#dc2626" : "#64748b", fontWeight: 600 }}>
-                  {voiceDispatch?.deliveryLabel || "Automated AI Voice Call with Audio Prompt"}
+                  {voiceDispatch?.deliveryLabel || "Automated AI Voice Recovery Call"}
+                </div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setSelectedChannel("SMS")}
+              style={{
+                padding: "12px 14px",
+                borderRadius: "10px",
+                border: selectedChannel === "SMS" ? "2px solid #059669" : "1px solid #e2e8f0",
+                background: selectedChannel === "SMS" ? "#ecfdf5" : "#ffffff",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: "22px" }}>💬</span>
+              <div>
+                <div style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>SMS (Exotel API)</div>
+                <div style={{ fontSize: "11px", color: smsDispatch?.status === "SENT" ? "#059669" : smsDispatch?.status === "FAILED" ? "#dc2626" : "#64748b", fontWeight: 600 }}>
+                  {smsDispatch?.deliveryLabel || "Direct DLT SMS with Secure Link"}
                 </div>
               </div>
             </button>
@@ -1036,11 +1105,21 @@ export function AutonomousRecoveryWorkspace({
                     </strong>
                   </div>
                 </div>
-                {voiceDispatch?.providerMessageId && (
-                  <span style={{ fontSize: "10.5px", fontFamily: "monospace", color: "#64748b" }}>
-                    Call SID: {voiceDispatch.providerMessageId}
-                  </span>
-                )}
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {voiceDispatch?.providerMessageId && (
+                    <span style={{ fontSize: "10.5px", fontFamily: "monospace", color: "#64748b" }}>
+                      Call SID: {voiceDispatch.providerMessageId}
+                    </span>
+                  )}
+                  <button
+                    onClick={handleManualVoiceCall}
+                    disabled={loadingAction !== null}
+                    className="btn btn-primary btn-sm"
+                    style={{ background: "#2563eb", color: "#ffffff", fontSize: "11px", padding: "5px 12px" }}
+                  >
+                    📞 Trigger Call Now
+                  </button>
+                </div>
               </div>
 
               <div
@@ -1063,6 +1142,61 @@ export function AutonomousRecoveryWorkspace({
                     voiceDispatch?.content?.body ||
                     (analysis?.customerMessage as any)?.voice ||
                     `Hello ${customerName}, this is an automated priority payment notification from Recoverly. Your recent payment of ${incident.incident.currency} ${incident.incident.amount.toLocaleString()} could not be processed due to ${incident.incident.failureCode}. A direct resolution link has been delivered to your email. Thank you.`}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {selectedChannel === "SMS" && (
+            <div style={{ background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                <div>
+                  <h4 style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
+                    SMS Outreach Preview • To: {customerPhone}
+                  </h4>
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                    Recipient: {customerName} | Provider: Exotel SMS API | Status:{" "}
+                    <strong style={{ color: smsDispatch?.status === "SENT" ? "#059669" : smsDispatch?.status === "FAILED" ? "#dc2626" : "#475569" }}>
+                      {smsDispatch?.deliveryLabel || "Pending SMS Dispatch"}
+                    </strong>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {smsDispatch?.providerMessageId && (
+                    <span style={{ fontSize: "10.5px", fontFamily: "monospace", color: "#64748b" }}>
+                      SMS SID: {smsDispatch.providerMessageId}
+                    </span>
+                  )}
+                  <button
+                    onClick={handleSendManualSms}
+                    disabled={loadingAction !== null}
+                    className="btn btn-primary btn-sm"
+                    style={{ background: "#059669", color: "#ffffff", fontSize: "11px", padding: "5px 12px" }}
+                  >
+                    💬 Send SMS Now
+                  </button>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  borderRadius: "10px",
+                  padding: "16px 20px",
+                  border: "1px solid #bbf7d0",
+                  fontSize: "13px",
+                  color: "#065f46",
+                  lineHeight: "1.6",
+                }}
+              >
+                <div style={{ fontSize: "11px", fontWeight: 800, color: "#047857", textTransform: "uppercase", marginBottom: "6px" }}>
+                  📱 SMS Message Text (Exotel Outbound)
+                </div>
+                <div style={{ whiteSpace: "pre-wrap", color: "#064e3b" }}>
+                  {smsDispatch?.messagePreview ||
+                    smsDispatch?.content?.body ||
+                    (analysis?.customerMessage as any)?.sms ||
+                    `Recoverly Alert: Payment of ${incident.incident.currency} ${incident.incident.amount.toLocaleString()} for ${customerName} failed. Complete payment securely at: ${resolveUrl}`}
                 </div>
               </div>
             </div>

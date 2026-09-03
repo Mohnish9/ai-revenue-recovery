@@ -25,6 +25,15 @@ export interface DetailedChannelReadiness {
     actionLabel: string;
     actionUrl: string;
   };
+  sms: {
+    status: "READY" | "FAILED" | "UNCONFIGURED";
+    deliveryLabel: string;
+    senderId: string;
+    dltConfigured: boolean;
+    details: string;
+    actionLabel: string;
+    actionUrl: string;
+  };
   preflightPassed: boolean;
   preflightSummary: string;
   evaluatedAt: string;
@@ -46,6 +55,13 @@ export interface DetailedChannelReadiness {
     deliveryLabel: string;
     details: string;
     actionLabel: string;
+  };
+  exotelSms?: {
+    configured: boolean;
+    senderId: string;
+    status: string;
+    deliveryLabel: string;
+    details: string;
   };
   defaultTestContact?: {
     email: string;
@@ -143,11 +159,36 @@ export function getDetailedChannelReadiness(
     }
   }
 
-  const preflightPassed = emailStatus === "READY" || voiceStatus === "READY";
+  // 3. SMS Readiness Evaluation (Exotel SMS)
+  const smsSenderId = process.env.EXOTEL_SMS_SENDER_ID?.trim() || exotelExoPhone || "";
+  const dltEntityId = process.env.EXOTEL_SMS_ENTITY_ID?.trim() || "";
+  const dltTemplateId = process.env.EXOTEL_SMS_DLT_TEMPLATE_ID?.trim() || "";
+  const hasExotelSmsCreds = Boolean(exotelApiKey && exotelApiToken && exotelSid);
+
+  let smsStatus: "READY" | "FAILED" | "UNCONFIGURED" = "UNCONFIGURED";
+  let smsDeliveryLabel = "SMS Unconfigured";
+  let smsDetails = "";
+
+  if (!hasExotelSmsCreds) {
+    smsStatus = "UNCONFIGURED";
+    smsDeliveryLabel = "SMS Unconfigured (Missing Exotel API Credentials)";
+    smsDetails = "Exotel API key, token, or SID is missing.";
+  } else if (!targetPhone) {
+    smsStatus = "FAILED";
+    smsDeliveryLabel = "SMS Failed (Missing Phone Number)";
+    smsDetails = "Customer phone number is missing.";
+  } else {
+    smsStatus = "READY";
+    smsDeliveryLabel = `SMS Ready (Sender: ${smsSenderId || "ExoPhone"})`;
+    smsDetails = `Exotel SMS configured with sender ID ${smsSenderId || "Default ExoPhone"}.${dltTemplateId ? " DLT Template ID linked." : " Note: For Indian DLT compliance, register EXOTEL_SMS_DLT_TEMPLATE_ID if needed."}`;
+  }
+
+  const preflightPassed = emailStatus === "READY" || voiceStatus === "READY" || smsStatus === "READY";
   const preflightSummary = preflightPassed
     ? `Pre-flight checks passed: Active delivery channels available (${[
         emailStatus === "READY" ? "Email (Resend)" : null,
         voiceStatus === "READY" ? "Voice (Exotel)" : null,
+        smsStatus === "READY" ? "SMS (Exotel)" : null,
       ].filter(Boolean).join(", ")}).`
     : "Pre-flight Notice: Outbound channels have provider limitations. Recovery will execute with real provider error telemetry.";
 
@@ -173,6 +214,15 @@ export function getDetailedChannelReadiness(
       actionLabel: hasExotelCreds ? (targetPhone ? "VOICE READY" : "ADD PHONE") : "CONFIGURE EXOTEL",
       actionUrl: "https://my.exotel.com",
     },
+    sms: {
+      status: smsStatus,
+      deliveryLabel: smsDeliveryLabel,
+      senderId: smsSenderId,
+      dltConfigured: Boolean(dltTemplateId && dltEntityId),
+      details: smsDetails,
+      actionLabel: hasExotelSmsCreds ? (targetPhone ? "SMS READY" : "ADD PHONE") : "CONFIGURE SMS",
+      actionUrl: "https://my.exotel.com",
+    },
     preflightPassed,
     preflightSummary,
     evaluatedAt: now,
@@ -194,6 +244,13 @@ export function getDetailedChannelReadiness(
       deliveryLabel: voiceDeliveryLabel,
       details: voiceDetails,
       actionLabel: hasExotelCreds ? "VOICE CONFIGURED" : "CONFIGURE EXOTEL",
+    },
+    exotelSms: {
+      configured: hasExotelSmsCreds,
+      senderId: smsSenderId,
+      status: smsStatus,
+      deliveryLabel: smsDeliveryLabel,
+      details: smsDetails,
     },
     defaultTestContact: {
       email: demoContact.verifiedEmail || "customer@example.test",

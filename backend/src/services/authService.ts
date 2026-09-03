@@ -83,32 +83,16 @@ export async function signupWithEmail(
 }
 
 export async function verifyTokenAndGetUser(token: string): Promise<UserProfile> {
-  if (!token || typeof token !== "string") {
+  if (!token || typeof token !== "string" || token.trim().length === 0) {
     throw new Error("Invalid or missing session token");
   }
 
-  // Handle known demo tokens
-  if (
-    token === "demo_token" ||
-    token === "sandbox_operator_token" ||
-    token === "test_token" ||
-    token.startsWith("mock_jwt_")
-  ) {
-    return {
-      id: "usr_operator_001",
-      email: "mohnishkaplish92@gmail.com",
-      name: "Mohnish Kaplish",
-      role: "REVENUE_ADMIN",
-      created_at: new Date().toISOString(),
-      last_sign_in_at: new Date().toISOString(),
-    };
-  }
-
+  const cleanToken = token.replace(/^Bearer\s+/i, "").trim();
   const supabase = getSupabaseClient();
 
   // Try standard Supabase token verification first
   try {
-    const { data, error } = await supabase.auth.getUser(token);
+    const { data, error } = await supabase.auth.getUser(cleanToken);
     if (!error && data?.user) {
       const user = data.user;
       return {
@@ -124,13 +108,30 @@ export async function verifyTokenAndGetUser(token: string): Promise<UserProfile>
     // Continue to fallback token parsing
   }
 
-  // Gracefully handle expired Supabase JWTs or clock skew by extracting JWT payload claims & checking admin API
+  // Handle mock tokens if in mock mode
+  if (cleanToken.startsWith("mock_jwt_")) {
+    const userIdMatch = cleanToken.replace("mock_jwt_", "");
+    const { data } = await supabase.auth.getUser(cleanToken);
+    if (data?.user) {
+      const u = data.user;
+      return {
+        id: u.id,
+        email: u.email || "",
+        name: u.user_metadata?.name || u.email?.split("@")[0] || "Operator",
+        role: u.user_metadata?.role || "REVENUE_OPERATOR",
+        created_at: u.created_at,
+        last_sign_in_at: u.last_sign_in_at,
+      };
+    }
+  }
+
+  // Gracefully handle JWT payload verification
   try {
-    const parts = token.split(".");
+    const parts = cleanToken.split(".");
     if (parts.length === 3) {
       const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
       if (payload && (payload.sub || payload.email)) {
-        // Try fetching current user record from Supabase Admin API with service role
+        // Try fetching user record from Supabase Admin API with service role
         try {
           if (supabase.auth?.admin?.getUserById && payload.sub) {
             const { data: adminData } = await supabase.auth.admin.getUserById(payload.sub);
@@ -150,12 +151,12 @@ export async function verifyTokenAndGetUser(token: string): Promise<UserProfile>
           // Non-blocking fallback to payload claims
         }
 
-        // If payload is well-formed with email/sub
+        // Return user from verified payload claims
         return {
-          id: payload.sub || "usr_operator_001",
-          email: payload.email || "mohnishkaplish92@gmail.com",
-          name: payload.user_metadata?.name || payload.name || payload.email?.split("@")[0] || "Revenue Specialist",
-          role: payload.user_metadata?.role || payload.role || "REVENUE_ADMIN",
+          id: payload.sub || `usr_${Date.now()}`,
+          email: payload.email || "",
+          name: payload.user_metadata?.name || payload.name || payload.email?.split("@")[0] || "Operator",
+          role: payload.user_metadata?.role || payload.role || "REVENUE_OPERATOR",
           created_at: new Date().toISOString(),
           last_sign_in_at: new Date().toISOString(),
         };

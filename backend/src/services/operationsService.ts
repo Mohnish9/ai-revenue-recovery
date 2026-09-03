@@ -2,10 +2,11 @@ import { getSupabaseClient } from "./supabaseService.js";
 import { generateContentResilient, cleanAndParseJson } from "./geminiService.js";
 import {
   OutboundDeliveryResult,
-  sendWhatsAppMessage,
   sendSmsMessage,
   sendEmailMessage,
 } from "./messagingService.js";
+import { sendExotelSmsRecovery } from "./smsRecoveryService.js";
+import { UserProfile, canUserAccess, isMohnishUser, getOwnerIdForUser } from "./dataAccessService.js";
 import {
   persistentSandboxIncidents,
   mapStoredIncidentToResponse,
@@ -62,15 +63,20 @@ function getFrontendRecoveryUrl(id: string): string {
   return `${baseUrl}/resolve/${id}`;
 }
 
-export async function listCustomers(limit: number, search?: string) {
+export async function listCustomers(limit: number, search?: string, user?: UserProfile) {
   let dbCustomers = safeResult(
-    await getSupabaseClient().from("customers").select("*").order("created_at", { ascending: false }).limit(limit),
+    await getSupabaseClient().from("customers").select("*").order("created_at", { ascending: false }).limit(limit * 2),
     []
   );
+
+  if (user) {
+    dbCustomers = dbCustomers.filter((c: any) => canUserAccess(user, c.owner_id));
+  }
 
   // Include customers dynamically created through sandbox incidents
   const sandboxCustomersMap = new Map<string, any>();
   for (const sb of persistentSandboxIncidents.values()) {
+    if (!canUserAccess(user, sb.owner_id)) continue;
     if (
       sb.customer_id &&
       !sandboxCustomersMap.has(sb.customer_id) &&
@@ -104,13 +110,16 @@ export async function listCustomers(limit: number, search?: string) {
   return merged.slice(0, limit);
 }
 
-export async function getCustomer(id: string) {
+export async function getCustomer(id: string, user?: UserProfile) {
   const result = await getSupabaseClient().from("customers").select("*").eq("id", id).maybeSingle();
   const found = requireResult(result);
-  if (found) return found;
+  if (found) {
+    if (!canUserAccess(user, found.owner_id)) return null;
+    return found;
+  }
 
   const matched = Array.from(persistentSandboxIncidents.values()).find(
-    (sb) => sb.customer_id === id
+    (sb) => sb.customer_id === id && canUserAccess(user, sb.owner_id)
   );
   if (matched) {
     return {
@@ -125,22 +134,26 @@ export async function getCustomer(id: string) {
   return null;
 }
 
-export async function getCustomerOperations(id: string, limit: number) {
+export async function getCustomerOperations(id: string, limit: number, user?: UserProfile) {
   const supabase = getSupabaseClient();
   const [customer, transactions, invoices, subscriptions, cases, events] = await Promise.all([
     supabase.from("customers").select("*").eq("id", id).maybeSingle(),
-    supabase.from("transactions").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(limit),
-    supabase.from("invoices").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(limit),
-    supabase.from("subscriptions").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(limit),
-    supabase.from("recovery_cases").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(limit),
-    supabase.from("payment_events").select("*").eq("customer_id", id).order("occurred_at", { ascending: false }).limit(limit),
+    supabase.from("transactions").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(limit * 2),
+    supabase.from("invoices").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(limit * 2),
+    supabase.from("subscriptions").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(limit * 2),
+    supabase.from("recovery_cases").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(limit * 2),
+    supabase.from("payment_events").select("*").eq("customer_id", id).order("occurred_at", { ascending: false }).limit(limit * 2),
   ]);
   let customerRecord = safeResult(customer, null);
   
+  if (customerRecord && !canUserAccess(user, customerRecord.owner_id)) {
+    customerRecord = null;
+  }
+
   // If not found in production Supabase, search in persistent sandbox store
   if (!customerRecord) {
     const matchedSandbox = Array.from(persistentSandboxIncidents.values()).find(
-      (sb) => sb.customer_id === id
+      (sb) => sb.customer_id === id && canUserAccess(user, sb.owner_id)
     );
     if (matchedSandbox) {
       customerRecord = {
@@ -155,63 +168,100 @@ export async function getCustomerOperations(id: string, limit: number) {
 
   if (!customerRecord) return null;
 
+  let filteredTransactions = safeResult(transactions, []);
+  let filteredInvoices = safeResult(invoices, []);
+  let filteredSubscriptions = safeResult(subscriptions, []);
+  let filteredCases = safeResult(cases, []);
+  let filteredEvents = safeResult(events, []);
+
+  if (user) {
+    filteredTransactions = filteredTransactions.filter((t: any) => canUserAccess(user, t.owner_id));
+    filteredInvoices = filteredInvoices.filter((i: any) => canUserAccess(user, i.owner_id));
+    filteredSubscriptions = filteredSubscriptions.filter((s: any) => canUserAccess(user, s.owner_id));
+    filteredCases = filteredCases.filter((c: any) => canUserAccess(user, c.owner_id));
+    filteredEvents = filteredEvents.filter((e: any) => canUserAccess(user, e.owner_id));
+  }
+
   // Include active and resolved customer-linked sandbox incidents
   const customerSandboxIncidents = Array.from(persistentSandboxIncidents.values())
-    .filter(item => item.customer_id === id || (customerRecord?.email && item.customer_email?.toLowerCase() === customerRecord.email.toLowerCase()))
+    .filter(item => canUserAccess(user, item.owner_id) && (item.customer_id === id || (customerRecord?.email && item.customer_email?.toLowerCase() === customerRecord.email.toLowerCase())))
     .map(mapStoredIncidentToResponse);
 
   return {
     customer: customerRecord,
-    transactions: safeResult(transactions, []),
-    invoices: safeResult(invoices, []),
-    subscriptions: safeResult(subscriptions, []),
-    recoveryCases: safeResult(cases, []),
-    paymentEvents: safeResult(events, []),
+    transactions: filteredTransactions.slice(0, limit),
+    invoices: filteredInvoices.slice(0, limit),
+    subscriptions: filteredSubscriptions.slice(0, limit),
+    recoveryCases: filteredCases.slice(0, limit),
+    paymentEvents: filteredEvents.slice(0, limit),
     sandboxIncidents: customerSandboxIncidents,
   };
 }
 
-export async function listTransactions(limit: number, status?: string, paymentMethod?: string) {
-  let query = getSupabaseClient().from("transactions").select("*, customers(id, name, email)").order("created_at", { ascending: false }).limit(limit);
+export async function listTransactions(limit: number, status?: string, paymentMethod?: string, user?: UserProfile) {
+  let query = getSupabaseClient().from("transactions").select("*, customers(id, name, email)").order("created_at", { ascending: false }).limit(limit * 2);
   if (status) query = query.eq("status", status);
   if (paymentMethod) query = query.eq("payment_method", paymentMethod);
-  return requireResult(await query) ?? [];
+  let res = requireResult(await query) ?? [];
+  if (user) {
+    res = res.filter((t: any) => canUserAccess(user, t.owner_id));
+  }
+  return res.slice(0, limit);
 }
 
-export async function getTransaction(id: string) {
-  return requireResult(await getSupabaseClient().from("transactions").select("*, customers(*)").eq("id", id).maybeSingle());
+export async function getTransaction(id: string, user?: UserProfile) {
+  const res: any = requireResult(await getSupabaseClient().from("transactions").select("*, customers(*)").eq("id", id).maybeSingle());
+  if (res && !canUserAccess(user, res.owner_id)) return null;
+  return res;
 }
 
-export async function listInvoices(limit: number, status?: string) {
-  let query = getSupabaseClient().from("invoices").select("*, customers(id, name, email)").order("due_date", { ascending: false }).limit(limit);
+export async function listInvoices(limit: number, status?: string, user?: UserProfile) {
+  let query = getSupabaseClient().from("invoices").select("*, customers(id, name, email)").order("due_date", { ascending: false }).limit(limit * 2);
   if (status) query = query.eq("status", status);
-  return requireResult(await query) ?? [];
+  let res = requireResult(await query) ?? [];
+  if (user) {
+    res = res.filter((i: any) => canUserAccess(user, i.owner_id));
+  }
+  return res.slice(0, limit);
 }
 
-export async function getInvoice(id: string) {
-  return requireResult(await getSupabaseClient().from("invoices").select("*, customers(*)").eq("id", id).maybeSingle());
+export async function getInvoice(id: string, user?: UserProfile) {
+  const res: any = requireResult(await getSupabaseClient().from("invoices").select("*, customers(*)").eq("id", id).maybeSingle());
+  if (res && !canUserAccess(user, res.owner_id)) return null;
+  return res;
 }
 
-export async function listSubscriptions(limit: number, status?: string) {
-  let query = getSupabaseClient().from("subscriptions").select("*, customers(id, name, email)").order("created_at", { ascending: false }).limit(limit);
+export async function listSubscriptions(limit: number, status?: string, user?: UserProfile) {
+  let query = getSupabaseClient().from("subscriptions").select("*, customers(id, name, email)").order("created_at", { ascending: false }).limit(limit * 2);
   if (status) query = query.eq("status", status);
-  return requireResult(await query) ?? [];
+  let res = requireResult(await query) ?? [];
+  if (user) {
+    res = res.filter((s: any) => canUserAccess(user, s.owner_id));
+  }
+  return res.slice(0, limit);
 }
 
-export async function listPaymentEvents(limit: number, eventType?: string) {
-  let query = getSupabaseClient().from("payment_events").select("*, customers(id, name, email)").order("occurred_at", { ascending: false }).limit(limit);
+export async function listPaymentEvents(limit: number, eventType?: string, user?: UserProfile) {
+  let query = getSupabaseClient().from("payment_events").select("*, customers(id, name, email)").order("occurred_at", { ascending: false }).limit(limit * 2);
   if (eventType) query = query.eq("event_type", eventType);
-  return requireResult(await query) ?? [];
+  let res = requireResult(await query) ?? [];
+  if (user) {
+    res = res.filter((e: any) => canUserAccess(user, e.owner_id));
+  }
+  return res.slice(0, limit);
 }
 
-export async function listRecoveryCases(limit: number, status?: string, priority?: string) {
-  let query = getSupabaseClient().from("recovery_cases").select("*, customers(*)").order("created_at", { ascending: false }).limit(limit);
+export async function listRecoveryCases(limit: number, status?: string, priority?: string, user?: UserProfile) {
+  let query = getSupabaseClient().from("recovery_cases").select("*, customers(*)").order("created_at", { ascending: false }).limit(limit * 2);
   if (status) query = query.eq("status", status);
   if (priority) query = query.eq("priority", priority);
-  const dbCases = requireResult(await query) ?? [];
+  let dbCases = requireResult(await query) ?? [];
+  if (user) {
+    dbCases = dbCases.filter((c: any) => canUserAccess(user, c.owner_id));
+  }
 
   // Also include sandbox incidents if DB cases are few or for unified view
-  const sandboxItems = Array.from(persistentSandboxIncidents.values());
+  const sandboxItems = Array.from(persistentSandboxIncidents.values()).filter(sb => canUserAccess(user, sb.owner_id));
   const convertedSandboxCases = sandboxItems.map((sb) => ({
     id: sb.id,
     customer_id: sb.customer_id,
@@ -249,7 +299,7 @@ export async function listRecoveryCases(limit: number, status?: string, priority
   return combined.slice(0, limit);
 }
 
-export async function getRecoveryCase(id: string) {
+export async function getRecoveryCase(id: string, user?: UserProfile) {
   const supabase = getSupabaseClient();
   const caseResult = await supabase.from("recovery_cases").select("*, customers(*)").eq("id", id).maybeSingle();
   const recoveryCase = requireResult(caseResult);
@@ -257,10 +307,13 @@ export async function getRecoveryCase(id: string) {
   if (!recoveryCase) {
     // Check if ID corresponds to a persistent Sandbox Incident
     let sb = persistentSandboxIncidents.get(id);
+    if (sb && !canUserAccess(user, sb.owner_id)) {
+      sb = undefined;
+    }
     if (!sb) {
       // Check sandbox_incidents table in Supabase
       const { data: dbSb } = await supabase.from("sandbox_incidents").select("*").eq("id", id).maybeSingle();
-      if (dbSb) {
+      if (dbSb && canUserAccess(user, dbSb.owner_id)) {
         const meta = dbSb.metadata || {};
         sb = {
           id: dbSb.id,
@@ -297,13 +350,14 @@ export async function getRecoveryCase(id: string) {
           analysis: meta.analysis || null,
           lifecycle: [],
           actions: meta.actions || [],
+          owner_id: dbSb.owner_id,
           created_at: dbSb.created_at || new Date().toISOString(),
           updated_at: dbSb.updated_at || new Date().toISOString(),
         };
       }
     }
 
-    if (!sb) {
+    if (!sb || !canUserAccess(user, sb.owner_id)) {
       return null;
     }
 
@@ -353,6 +407,10 @@ export async function getRecoveryCase(id: string) {
     };
   }
 
+  if (recoveryCase && !canUserAccess(user, recoveryCase.owner_id)) {
+    return null;
+  }
+
   const [transaction, invoice, actions, promise, events, audit, agent] = await Promise.all([
     recoveryCase.source_event_id
       ? supabase.from("transactions").select("*").eq("id", recoveryCase.source_event_id).maybeSingle()
@@ -379,36 +437,45 @@ export async function getRecoveryCase(id: string) {
   };
 }
 
-export async function listCaseActions(caseId: string, limit: number) {
+export async function listCaseActions(caseId: string, limit: number, user?: UserProfile) {
   return requireResult(await getSupabaseClient().from("recovery_actions").select("*").eq("recovery_case_id", caseId).order("created_at", { ascending: false }).limit(limit)) ?? [];
 }
 
-export async function listCasePromises(caseId: string, limit: number) {
+export async function listCasePromises(caseId: string, limit: number, user?: UserProfile) {
   return requireResult(await getSupabaseClient().from("promises_to_pay").select("*").eq("recovery_case_id", caseId).order("created_at", { ascending: false }).limit(limit)) ?? [];
 }
 
-export async function listCaseEvents(caseId: string, limit: number) {
+export async function listCaseEvents(caseId: string, limit: number, user?: UserProfile) {
   const supabase = getSupabaseClient();
-  const caseResult = await supabase.from("recovery_cases").select("customer_id").eq("id", caseId).maybeSingle();
+  const caseResult = await supabase.from("recovery_cases").select("customer_id, owner_id").eq("id", caseId).maybeSingle();
   if (caseResult.error) throw caseResult.error;
   if (!caseResult.data) return null;
   const recoveryCase = caseResult.data;
+  if (!canUserAccess(user, recoveryCase.owner_id)) return null;
   return requireResult(await supabase.from("payment_events").select("*").eq("customer_id", recoveryCase.customer_id).order("occurred_at", { ascending: false }).limit(limit)) ?? [];
 }
 
-export async function listCaseAuditLogs(caseId: string, limit: number) {
+export async function listCaseAuditLogs(caseId: string, limit: number, user?: UserProfile) {
   return requireResult(await getSupabaseClient().from("audit_logs").select("*").eq("recovery_case_id", caseId).order("created_at", { ascending: false }).limit(limit)) ?? [];
 }
 
-export async function listAllAuditLogs(limit: number, actorType?: string) {
-  let query = getSupabaseClient().from("audit_logs").select("*, recovery_cases(id, case_type, amount_at_risk, status, customer_id, customers(name, email))").order("created_at", { ascending: false }).limit(limit);
+export async function listAllAuditLogs(limit: number, actorType?: string, user?: UserProfile) {
+  let query = getSupabaseClient().from("audit_logs").select("*, recovery_cases(id, case_type, amount_at_risk, status, customer_id, customers(name, email))").order("created_at", { ascending: false }).limit(limit * 2);
   if (actorType) query = query.eq("actor_type", actorType);
-  return requireResult(await query) ?? [];
+  let res = requireResult(await query) ?? [];
+  if (user) {
+    res = res.filter((aud: any) => canUserAccess(user, aud.owner_id));
+  }
+  return res.slice(0, limit);
 }
 
-export async function listAllAgentLogs(limit: number) {
-  const query = getSupabaseClient().from("agent_logs").select("*, recovery_cases(id, case_type, amount_at_risk, status, customers(name, email))").order("timestamp", { ascending: false }).limit(limit);
-  return requireResult(await query) ?? [];
+export async function listAllAgentLogs(limit: number, user?: UserProfile) {
+  const query = getSupabaseClient().from("agent_logs").select("*, recovery_cases(id, case_type, amount_at_risk, status, customers(name, email))").order("timestamp", { ascending: false }).limit(limit * 2);
+  let res = requireResult(await query) ?? [];
+  if (user) {
+    res = res.filter((al: any) => canUserAccess(user, al.owner_id));
+  }
+  return res.slice(0, limit);
 }
 
 export async function executeRecoveryAction(caseId: string, actionType: string, reason: string, operatorInfo?: { name?: string; email?: string }) {
@@ -616,8 +683,8 @@ function generateFallbackCaseAnalysis(contextData: any, fullCase: any, userInstr
   };
 }
 
-export async function analyzeRecoveryCaseWithAI(caseId: string, userInstruction?: string) {
-  const fullCase = await getRecoveryCase(caseId);
+export async function analyzeRecoveryCaseWithAI(caseId: string, userInstruction?: string, user?: UserProfile) {
+  const fullCase = await getRecoveryCase(caseId, user);
   if (!fullCase) throw new Error("Recovery case not found");
 
   const caseData = fullCase.case;
@@ -739,10 +806,10 @@ Respond with a strictly formatted JSON object:
   return structuredAnalysis;
 }
 
-export async function chatWithRecoveryAI(message: string, caseContextId?: string) {
+export async function chatWithRecoveryAI(message: string, caseContextId?: string, user?: UserProfile) {
   let contextSnippet = "";
   if (caseContextId) {
-    const fullCase = await getRecoveryCase(caseContextId);
+    const fullCase = await getRecoveryCase(caseContextId, user);
     if (fullCase) {
       contextSnippet = `Active Case Context: ${JSON.stringify(fullCase.case)}`;
     }
@@ -1004,6 +1071,7 @@ export interface CreateSandboxIncidentInput {
 // Persistent Sandbox Incidents Store (Survives page navigation, browser reloads)
 interface StoredSandboxIncident {
   id: string;
+  owner_id?: string;
   label: string;
   isSandbox: boolean;
   scenario_type: string;
@@ -1071,7 +1139,7 @@ interface StoredSandboxIncident {
   updated_at: string;
 }
 
-export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
+export async function createSandboxIncident(input: CreateSandboxIncidentInput, user?: UserProfile) {
   const supabase = getSupabaseClient();
   const rawKey = (
     input.scenarioTypeKey ||
@@ -1183,8 +1251,11 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
     },
   ];
 
+  const incidentOwnerId = getOwnerIdForUser(user) || "system";
+
   const storedIncident: StoredSandboxIncident = {
     id: incidentId,
+    owner_id: incidentOwnerId,
     label: "DEMO/SANDBOX — NO PRODUCTION DB IMPACT",
     isSandbox: true,
     scenario_type: typeConfig.key,
@@ -1235,6 +1306,7 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
       payment_method: paymentMethod,
       failure_reason: failureReason,
       status: "ACTIVE",
+      owner_id: incidentOwnerId,
       metadata: {
         customer_name: customer.name,
         customer_email: customer.email,
@@ -1269,7 +1341,7 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
   }
 
   // Autonomous Flow: Run initial AI analysis immediately
-  const analyzedResponse = await analyzeSandboxIncidentWithAI(incidentId, input.customInstruction);
+  const analyzedResponse = await analyzeSandboxIncidentWithAI(incidentId, input.customInstruction, user);
 
   // Automatically start autonomous recovery loop: Schedule Attempt #1 for 2 minutes later (120,000 ms)
   scheduleAutonomousAttempt(incidentId, 1, 120_000);
@@ -1277,12 +1349,18 @@ export async function createSandboxIncident(input: CreateSandboxIncidentInput) {
   return mapStoredIncidentToResponse(persistentSandboxIncidents.get(incidentId) || storedIncident);
 }
 
-export async function listSandboxIncidents(filters?: {
-  scenarioType?: string;
-  status?: string;
-  category?: string;
-  limit?: number;
-}) {
+export async function listSandboxIncidents(
+  filters?: {
+    scenarioType?: string;
+    status?: string;
+    category?: string;
+    limit?: number;
+  },
+  _deprecatedOrUser?: any,
+  explicitUser?: UserProfile
+) {
+  const user = explicitUser || (_deprecatedOrUser && (_deprecatedOrUser.id || _deprecatedOrUser.role || _deprecatedOrUser.email) ? _deprecatedOrUser : undefined);
+
   if (persistentSandboxIncidents.size === 0) {
     try {
       const { initializeTelemetryDemoQueue } = await import("./telemetryService.js");
@@ -1293,7 +1371,7 @@ export async function listSandboxIncidents(filters?: {
   }
 
   const all = Array.from(persistentSandboxIncidents.values());
-  let filtered = all;
+  let filtered = all.filter(i => canUserAccess(user, i.owner_id));
 
   if (filters?.scenarioType) {
     filtered = filtered.filter((i) => i.scenario_type === filters.scenarioType);
@@ -1314,7 +1392,7 @@ export async function listSandboxIncidents(filters?: {
   return filtered.map(mapStoredIncidentToResponse);
 }
 
-export async function getSandboxIncident(id: string) {
+export async function getSandboxIncident(id: string, user?: UserProfile) {
   if (persistentSandboxIncidents.size === 0) {
     try {
       const { initializeTelemetryDemoQueue } = await import("./telemetryService.js");
@@ -1334,13 +1412,13 @@ export async function getSandboxIncident(id: string) {
       }
     }
   }
-  if (!item) return null;
+  if (!item || !canUserAccess(user, item.owner_id)) return null;
   return mapStoredIncidentToResponse(item);
 }
 
-export async function analyzeSandboxIncidentWithAI(incidentId: string, customInstruction?: string) {
+export async function analyzeSandboxIncidentWithAI(incidentId: string, customInstruction?: string, user?: UserProfile) {
   const item = persistentSandboxIncidents.get(incidentId);
-  if (!item) {
+  if (!item || !canUserAccess(user, item.owner_id)) {
     throw new Error(`Sandbox incident ${incidentId} not found`);
   }
 
@@ -1551,10 +1629,11 @@ export async function executeSandboxIncidentAction(
     strategyName?: string;
     reason?: string;
     operatorInfo?: { name?: string; email?: string };
-  }
+  },
+  user?: UserProfile
 ) {
   const item = persistentSandboxIncidents.get(incidentId);
-  if (!item) {
+  if (!item || !canUserAccess(user, item.owner_id)) {
     throw new Error(`Sandbox incident ${incidentId} not found`);
   }
 
@@ -1688,10 +1767,10 @@ export const RECOVERY_CAPABILITIES = [
     description: "Generates authenticated payment link supporting Card, NetBanking, and Wallets.",
   },
   {
-    key: "WHATSAPP_OUTREACH",
-    name: "WhatsApp 1-Click UPI Intent",
-    channel: "WHATSAPP",
-    description: "Dispatches WhatsApp message with instant deep-link to Google Pay / PhonePe / Paytm.",
+    key: "VOICE_OUTREACH",
+    name: "Interactive Exotel Voice Recovery",
+    channel: "VOICE",
+    description: "Dispatches automated high-priority voice call with synthesized AI billing recovery script.",
   },
   {
     key: "SMS_OUTREACH",
@@ -1755,7 +1834,11 @@ export const RECOVERY_CAPABILITIES = [
   },
 ];
 
-export async function deleteSandboxIncident(id: string) {
+export async function deleteSandboxIncident(id: string, user?: UserProfile) {
+  const item = persistentSandboxIncidents.get(id);
+  if (item && !canUserAccess(user, item.owner_id)) {
+    return { success: false, id, error: "Unauthorized" };
+  }
   const existed = persistentSandboxIncidents.delete(id);
   return { success: existed, id };
 }
@@ -1769,10 +1852,11 @@ export async function executeAutonomousLoopStep(
       maxRecoverableExposure?: number;
     };
     operatorInstruction?: string;
-  }
+  },
+  user?: UserProfile
 ) {
   const item = persistentSandboxIncidents.get(incidentId);
-  if (!item) {
+  if (!item || !canUserAccess(user, item.owner_id)) {
     throw new Error(`Sandbox incident ${incidentId} not found`);
   }
 
@@ -2224,14 +2308,15 @@ export async function runFullAutonomousLoop(
       maxRecoverableExposure?: number;
     };
     operatorInstruction?: string;
-  }
+  },
+  user?: UserProfile
 ) {
   const maxAttempts = options?.policyConfig?.maxAttempts || 4;
   const trace: any[] = [];
   let currentStepResult: any = null;
 
   for (let i = 0; i < maxAttempts; i++) {
-    currentStepResult = await executeAutonomousLoopStep(incidentId, options);
+    currentStepResult = await executeAutonomousLoopStep(incidentId, options, user);
     trace.push(currentStepResult.stepResult);
     if (currentStepResult.stepResult.isTerminal) {
       break;
@@ -2247,10 +2332,11 @@ export async function runFullAutonomousLoop(
 
 export async function reassessSandboxIncidentWithAI(
   incidentId: string,
-  params?: { customInstruction?: string; lastOutcomeNote?: string }
+  params?: { customInstruction?: string; lastOutcomeNote?: string },
+  user?: UserProfile
 ) {
   const item = persistentSandboxIncidents.get(incidentId);
-  if (!item) {
+  if (!item || !canUserAccess(user, item.owner_id)) {
     throw new Error(`Sandbox incident ${incidentId} not found`);
   }
 
@@ -2448,10 +2534,11 @@ Your response MUST be a valid JSON object matching this schema:
 
 export async function escalateSandboxIncidentToHuman(
   incidentId: string,
-  params?: { reason?: string; operatorName?: string }
+  params?: { reason?: string; operatorName?: string },
+  user?: UserProfile
 ) {
   const item = persistentSandboxIncidents.get(incidentId);
-  if (!item) {
+  if (!item || !canUserAccess(user, item.owner_id)) {
     throw new Error(`Sandbox incident ${incidentId} not found`);
   }
 
@@ -2490,8 +2577,8 @@ export async function escalateSandboxIncidentToHuman(
 }
 
 // Backwards-compatible aliases
-export async function createAndAnalyzeSandboxIncident(input: CreateSandboxIncidentInput) {
-  return await createSandboxIncident({ ...input, autoAnalyze: true });
+export async function createAndAnalyzeSandboxIncident(input: CreateSandboxIncidentInput, user?: UserProfile) {
+  return await createSandboxIncident({ ...input, autoAnalyze: true }, user);
 }
 
 export function simulateSandboxIncident(params: {
@@ -2666,12 +2753,13 @@ export async function analyzeDemoScenarioWithAI(scenarioKey: string, customInstr
   };
 }
 
-export async function listHumanEscalations() {
+export async function listHumanEscalations(user?: UserProfile) {
   const supabase = getSupabaseClient();
   const escalationsMap = new Map<string, any>();
 
   // 1. Gather all escalated and human-resolved incidents from persistent sandbox/memory store
   for (const [id, item] of persistentSandboxIncidents.entries()) {
+    if (!canUserAccess(user, item.owner_id)) continue;
     const isEscalatedStatus = item.status === "ESCALATED_TO_HUMAN" || item.status === "ESCALATED";
     const hasEscalationDossier = item.escalationDossier != null;
     const isHumanResolved = item.status === "RESOLVED" || (item.timeline && item.timeline.some((t: any) => t.type === "ESCALATED" || t.title?.toLowerCase().includes("human escalation") || t.title?.toLowerCase().includes("resolved by operator")));
@@ -2753,6 +2841,7 @@ export async function listHumanEscalations() {
 
     if (dbCases && dbCases.length > 0) {
       for (const c of dbCases) {
+        if (user && !canUserAccess(user, (c as any).owner_id)) continue;
         if (!escalationsMap.has(c.id)) {
           const isResolved = c.status === "RECOVERED" || c.status === "RESOLVED";
           escalationsMap.set(c.id, {
@@ -3115,9 +3204,13 @@ export async function listHumanEscalations() {
 
 export async function takeOwnershipOfHumanEscalation(
   incidentId: string,
-  operatorName: string = "Revenue Specialist"
+  operatorName: string = "Revenue Specialist",
+  user?: UserProfile
 ) {
   const item = persistentSandboxIncidents.get(incidentId);
+  if (item && !canUserAccess(user, item.owner_id)) {
+    throw new Error(`Sandbox incident ${incidentId} not found`);
+  }
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -3171,9 +3264,13 @@ export async function takeOwnershipOfHumanEscalation(
 
 export async function addNoteToHumanEscalation(
   incidentId: string,
-  input: { note: string; operatorName?: string }
+  input: { note: string; operatorName?: string },
+  user?: UserProfile
 ) {
   const item = persistentSandboxIncidents.get(incidentId);
+  if (item && !canUserAccess(user, item.owner_id)) {
+    throw new Error(`Sandbox incident ${incidentId} not found`);
+  }
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const operator = input.operatorName || "Revenue Specialist";
@@ -3231,12 +3328,16 @@ export async function resolveHumanEscalation(
     notes?: string;
     settlementAmount?: number;
     operatorName?: string;
-  }
+  },
+  user?: UserProfile
 ) {
   // Cancel any active timers immediately
   clearIncidentTimer(incidentId);
 
   const item = persistentSandboxIncidents.get(incidentId);
+  if (item && !canUserAccess(user, item.owner_id)) {
+    throw new Error(`Sandbox incident ${incidentId} not found`);
+  }
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 

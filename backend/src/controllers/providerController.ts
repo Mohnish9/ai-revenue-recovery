@@ -8,9 +8,10 @@ import {
   updateDemoTestContactConfig,
 } from "../services/demoTestContactService.js";
 
-export async function getDemoTestContactController(_req: Request, res: Response) {
+export async function getDemoTestContactController(req: Request, res: Response) {
   try {
-    const config = getDemoTestContactConfig();
+    const user = (req as any).user;
+    const config = getDemoTestContactConfig(user);
     return res.json({ success: true, data: config });
   } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message });
@@ -19,8 +20,9 @@ export async function getDemoTestContactController(_req: Request, res: Response)
 
 export async function updateDemoTestContactController(req: Request, res: Response) {
   try {
+    const user = (req as any).user;
     const updates = req.body;
-    const config = updateDemoTestContactConfig(updates);
+    const config = updateDemoTestContactConfig(updates, user);
     return res.json({
       success: true,
       message: "Demo test contact configuration updated successfully.",

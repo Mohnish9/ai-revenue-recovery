@@ -55,6 +55,7 @@ import {
   resolveHumanEscalationController,
   takeOwnershipOfHumanEscalationController,
   addNoteToHumanEscalationController,
+  sendSmsRecoveryController,
 } from "../controllers/operationsController.js";
 import {
   getTelemetryQueueController,
@@ -71,7 +72,6 @@ import {
   updateDemoTestContactController,
   startPhoneVerificationController,
   checkPhoneVerificationController,
-  connectWhatsAppSandboxController,
   updateContactController,
 } from "../controllers/providerController.js";
 import {
@@ -164,8 +164,13 @@ apiRoutes.post("/provider/demo-test-contact", updateDemoTestContactController);
 apiRoutes.patch("/provider/demo-test-contact", updateDemoTestContactController);
 apiRoutes.post("/provider/twilio/verify/start", startPhoneVerificationController);
 apiRoutes.post("/provider/twilio/verify/check", checkPhoneVerificationController);
-apiRoutes.post("/provider/twilio/whatsapp/join", connectWhatsAppSandboxController);
-apiRoutes.post("/provider/twilio/whatsapp/connect", connectWhatsAppSandboxController);
+
+// SMS Recovery Operations (Exotel Outbound Dispatch)
+apiRoutes.post("/recovery/send-sms", sendSmsRecoveryController);
+apiRoutes.post("/operations/send-sms", sendSmsRecoveryController);
+apiRoutes.post("/sms/send-recovery-sms", sendSmsRecoveryController);
+apiRoutes.post("/sms/send-sms", sendSmsRecoveryController);
+apiRoutes.post("/sandbox/incidents/:id/sms", sendSmsRecoveryController);
 
 // Voice Recovery Operations (Exotel Outbound Dispatch)
 apiRoutes.post("/voice/recovery-call", dispatchVoiceCallController);

@@ -736,5 +736,44 @@ export async function updateDemoTestContactApi(
   });
 }
 
+// ----------------------------------------------------
+// Real Outreach Dispatch APIs (SMS & Voice)
+// ----------------------------------------------------
+
+export async function sendSmsRecoveryApi(params: {
+  incidentId?: string;
+  caseId?: string;
+  toPhone?: string;
+  message?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  data: any;
+}> {
+  return fetchJson<{ success: boolean; message: string; data: any }>("/recovery/send-sms", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function dispatchVoiceCallApi(params: {
+  incidentId: string;
+  destinationPhone?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  callSid?: string;
+  deliveryMode?: string;
+  data?: any;
+}> {
+  return fetchJson<{ success: boolean; message: string; callSid?: string; deliveryMode?: string; data?: any }>(
+    "/voice/recovery-call",
+    {
+      method: "POST",
+      body: JSON.stringify(params),
+    }
+  );
+}
+
 
 
