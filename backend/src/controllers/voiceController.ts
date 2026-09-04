@@ -42,6 +42,39 @@ export async function getVoiceRecoveryMessageController(req: Request, res: Respo
   const cleanCustomField = (rawCustomField || "").trim();
   const { incident, script, source } = await getOrGenerateVoiceRecoveryMessage(cleanCustomField);
   const elapsedMs = Date.now() - startTime;
+  const voiceLang = (process.env.EXOTEL_VOICE_LANGUAGE || "hi-IN").trim();
+
+  // Check if ExoML XML format was requested by Exotel
+  const isXml =
+    query.format === "xml" ||
+    query.format === "exoml" ||
+    req.headers.accept?.includes("application/xml") ||
+    req.headers.accept?.includes("text/xml");
+
+  if (isXml) {
+    const escaped = script
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+    const exoml = `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n    <Say voice="female" language="${voiceLang}">${escaped}</Say>\n</Response>`;
+    const xmlBuffer = Buffer.from(exoml, "utf8");
+
+    res.set("Content-Type", "application/xml; charset=utf-8");
+    res.set("Content-Length", xmlBuffer.length.toString());
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.set("X-Exotel-Voice-Language", voiceLang);
+    res.set("X-Exotel-Voice-Script-Language", "Hinglish");
+
+    console.info(`[Voice Controller] ✅ Delivering ExoML Hinglish Voice Script to Exotel in ${elapsedMs}ms`);
+    console.info(`[Voice Controller] ├─ Incident: ${incident?.id || "None"} (${incident?.customerName || "Customer"})`);
+    console.info(`[Voice Controller] ├─ Language: ${voiceLang} (Hinglish)`);
+    console.info(`[Voice Controller] └─ Spoken Text: "${script}"`);
+
+    res.status(200).send(exoml);
+    return;
+  }
 
   const textBuffer = Buffer.from(script, "utf8");
 
@@ -50,10 +83,13 @@ export async function getVoiceRecoveryMessageController(req: Request, res: Respo
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
+  res.set("X-Exotel-Voice-Language", voiceLang);
+  res.set("X-Exotel-Voice-Script-Language", "Hinglish");
 
-  console.info(`[Voice Controller] ✅ Delivering Voice Script to Exotel in ${elapsedMs}ms`);
+  console.info(`[Voice Controller] ✅ Delivering Hinglish Voice Script to Exotel in ${elapsedMs}ms`);
   console.info(`[Voice Controller] ├─ Incident: ${incident?.id || "None"} (${incident?.customerName || "Customer"})`);
   console.info(`[Voice Controller] ├─ Source: ${source}`);
+  console.info(`[Voice Controller] ├─ Voice Language: ${voiceLang}`);
   console.info(`[Voice Controller] ├─ Script Length: ${script.length} characters`);
   console.info(`[Voice Controller] ├─ Spoken Text: "${script}"`);
   console.info(`[Voice Controller] └─ Response Status: HTTP 200 OK`);

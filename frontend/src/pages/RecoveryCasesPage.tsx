@@ -562,24 +562,34 @@ export function RecoveryCasesPage({ onSelectCase, onNavigateToAgent }: RecoveryC
       </div>
 
       {/* SECTION 2: PRODUCTION RECOVERY CASES DATABASE */}
-      <div className="panel" style={{ marginTop: "24px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+      <div className="panel" style={{ marginTop: "36px" }}>
+        <div
+          className="panel-heading"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "20px 24px",
+            borderBottom: "1px solid #edf1f4",
+            background: "#ffffff",
+          }}
+        >
           <div>
             <h2 style={{ fontSize: "16px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
               Production Database Recovery Cases ({filteredCases.length})
             </h2>
-            <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>
+            <p style={{ fontSize: "12.5px", color: "#64748b", margin: "4px 0 0" }}>
               Permanent Supabase records with customer dunning history and multi-channel audit logs.
             </p>
           </div>
-          <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", padding: "6px 12px", borderRadius: "8px", fontSize: "12px" }}>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", padding: "6px 14px", borderRadius: "8px", fontSize: "12px" }}>
             <span style={{ color: "#64748b" }}>Queue At Risk: </span>
             <strong style={{ color: "#dc2626" }}>₹{totalAtRisk.toLocaleString()}</strong>
           </div>
         </div>
 
         {/* Filter and Search Bar */}
-        <div className="filter-bar">
+        <div className="filter-bar" style={{ padding: "14px 24px" }}>
           <input
             type="text"
             className="search-input"

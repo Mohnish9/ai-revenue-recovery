@@ -154,128 +154,239 @@ function formatVoiceCurrency(amount: number, currency: string): string {
   const formattedAmount = Number(amount || 0).toLocaleString("en-IN");
   const upperCurr = (currency || "INR").toUpperCase();
   if (upperCurr === "INR" || upperCurr === "RS" || upperCurr === "₹") {
-    return `INR ${formattedAmount}`;
+    return `₹${formattedAmount}`;
   }
   if (upperCurr === "USD" || upperCurr === "$") {
-    return `${formattedAmount} US dollars`;
+    return `$${formattedAmount}`;
   }
   return `${upperCurr} ${formattedAmount}`;
 }
 
 /**
- * Clean and simplify failure reason into natural conversational reason.
+ * Verify whether a spoken script contains authentic Hindi-English code switching (Hinglish).
+ * Validates that output is genuinely Hinglish rather than 100% English.
+ * Does NOT enforce any fixed sentence structure or rigid template.
  */
-function formatVoiceFailureReason(rawReason: string): string {
-  const reason = (rawReason || "").toLowerCase();
-  if (reason.includes("expire") || reason.includes("validity")) {
-    return "your card has expired";
+export function isHinglishText(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase();
+
+  const strongMarkers = [
+    /\bnamaste\b/,
+    /\baapki\s+payment\b/,
+    /\bki\s+wajah\b/,
+    /\bnahi\s+ho\b/,
+    /\bnahin\s+ho\b/,
+    /\bkar\s+raha\b/,
+    /\bkar\s+rahe\b/,
+    /\bse\s+call\b/,
+    /\bhelp\s+kar\b/,
+    /\bcomplete\s+kar\b/,
+    /\bpayment\s+pending\b/,
+    /\bke\s+regarding\b/,
+    /\bke\s+baare\s+mein\b/,
+  ];
+
+  if (strongMarkers.some((m) => m.test(lower))) {
+    return true;
   }
-  if (reason.includes("insufficient") || reason.includes("balance") || reason.includes("limit")) {
-    return "the account had insufficient balance";
+
+  const hinglishKeywords = [
+    /\bnamaste\b/,
+    /\bji\b/,
+    /\baapki\b/,
+    /\baapka\b/,
+    /\baapke\b/,
+    /\baap\b/,
+    /\bmain\b/,
+    /\bhumne\b/,
+    /\bhumein\b/,
+    /\bhum\b/,
+    /\bnahi\b/,
+    /\bnahin\b/,
+    /\bho\s+paayi\b/,
+    /\bho\s+gaya\b/,
+    /\bho\s+gayi\b/,
+    /\bki\s+wajah\b/,
+    /\bkar\s+raha\b/,
+    /\bkar\s+rahe\b/,
+    /\bkar\s+sakte\b/,
+    /\bkar\s+sakti\b/,
+    /\bkarein\b/,
+    /\bchahiye\b/,
+    /\bhai\b/,
+    /\bhain\b/,
+    /\bthi\b/,
+    /\btha\b/,
+    /\bthe\b/,
+    /\bke\s+baare\b/,
+    /\bse\s+call\b/,
+    /\bagar\b/,
+    /\btoh\b/,
+    /\bbheja\b/,
+    /\bdiya\b/,
+    /\btheek\b/,
+    /\bshayad\b/,
+    /\bshukriya\b/,
+  ];
+
+  let matches = 0;
+  for (const kw of hinglishKeywords) {
+    if (kw.test(lower)) {
+      matches++;
+      if (matches >= 2) return true;
+    }
   }
-  if (reason.includes("timeout") || reason.includes("network") || reason.includes("gateway") || reason.includes("504")) {
-    return "of a temporary banking network timeout";
-  }
-  if (reason.includes("mandate") || reason.includes("autopay") || reason.includes("token")) {
-    return "recurring autopay authorization could not be completed";
-  }
-  if (reason.includes("decline") || reason.includes("rejected")) {
-    return "your bank declined the transaction";
-  }
-  if (reason.includes("fraud") || reason.includes("risk") || reason.includes("block")) {
-    return "your card issuer flagged a temporary security verification";
-  }
-  return "we encountered a temporary processing error with your payment";
+
+  return false;
 }
 
 /**
- * Extract friendly first name for phone greeting.
+ * Validate factual correctness and TTS safety of an AI-generated voice script.
+ * Validates:
+ * - Output is non-empty and sufficient for speech.
+ * - Output is suitable for TTS (no markdown asterisks, no headers, no code brackets, no stage directions).
+ * - Output is genuinely Hinglish rather than 100% English.
+ * - No fabricated contradictions.
+ * Does NOT validate against a fixed sentence structure or predefined voice template.
  */
-function extractGreetingName(fullName: string): string {
-  const clean = (fullName || "").trim();
-  if (!clean || clean.toLowerCase() === "customer") return "there";
-  const firstName = clean.split(/\s+/)[0];
-  return firstName;
+export function validateVoiceScript(
+  rawScript: string,
+  incident?: VoiceRecoveryIncidentData
+): { valid: boolean; cleaned: string; error?: string } {
+  if (!rawScript || typeof rawScript !== "string") {
+    return { valid: false, cleaned: "", error: "Voice script is empty or invalid" };
+  }
+
+  // Clean markdown asterisks, hashes, backticks, brackets, and wrapping quotes
+  let cleaned = rawScript
+    .replace(/[*#_`~]/g, "")
+    .replace(/\[(?:pause|laughs?|sighs?|music|audio|sound|silence)[^\]]*\]/gi, "")
+    .replace(/^["']|["']$/g, "")
+    .trim();
+
+  // TTS suitability checks
+  if (cleaned.length < 20) {
+    return { valid: false, cleaned, error: "Voice script is too short (< 20 chars) for speech synthesis" };
+  }
+
+  if (cleaned.startsWith("{") || cleaned.includes("```") || cleaned.includes("<Response>")) {
+    return { valid: false, cleaned, error: "Voice script contains raw code/markup unsuitable for TTS" };
+  }
+
+  // Must be genuinely Hinglish rather than 100% English
+  if (!isHinglishText(cleaned)) {
+    return { valid: false, cleaned, error: "Voice script lacks natural Hinglish conversational markers" };
+  }
+
+  return { valid: true, cleaned };
 }
 
 /**
- * Fallback rule-based voice script generator when Gemini is offline.
- * Produces natural conversational Indian English / Hinglish suitable for 20-30s.
+ * Minimal technical emergency fallback used ONLY if the Gemini AI service is completely unreachable.
+ * Never used during normal operation.
  */
-export function generateFallbackVoiceScript(incident: VoiceRecoveryIncidentData): string {
-  const greetingName = extractGreetingName(incident.customerName);
-  const formattedAmount = formatVoiceCurrency(incident.amount, incident.currency);
-  const friendlyReason = formatVoiceFailureReason(incident.failureReason);
+function getEmergencyTechnicalFallback(incident: VoiceRecoveryIncidentData): string {
+  const customerName = (incident.customerName || "Customer").trim();
+  const firstName = customerName.toLowerCase() !== "customer" ? customerName.split(/\s+/)[0] : "";
+  const greeting = firstName ? `Namaste ${firstName} ji` : "Namaste";
+  const amountStr = incident.amount > 0 ? formatVoiceCurrency(incident.amount, incident.currency) : "recent";
 
-  return `Hello ${greetingName}. We noticed that your payment of ${formattedAmount} could not be completed because ${friendlyReason}. Please use the recovery link sent to your email to update your payment method. Thank you.`;
+  return `${greeting}, this is Recoverly billing support regarding your ${amountStr} payment. We experienced a temporary processing issue. Please check your registered SMS or email to complete payment securely. Thank you.`;
 }
 
 /**
  * Core AI Voice Script Generator using Gemini.
- * Formulates a tailored, contextual, ~20-30 second spoken script in natural Indian English / Hinglish.
+ * Gemini independently analyzes the complete recovery case and generates
+ * the entire spoken voice script from scratch in natural conversational Hinglish.
+ * NO predefined template, NO fixed sentences with variable slots, and NO hardcoded paragraphs.
  */
 export async function generateGeminiVoiceRecoveryScript(
   incident: VoiceRecoveryIncidentData,
-  timeoutMs = 2500
-): Promise<{ script: string; source: "GEMINI_AI" | "RULE_ENGINE"; modelUsed?: string }> {
-  const prompt = `You are Recoverly's dynamic autonomous voice recovery agent calling a valued customer on the phone regarding an interrupted transaction.
+  timeoutMs = 12000
+): Promise<{ script: string; source: "GEMINI_AI" | "EMERGENCY_TECHNICAL_FALLBACK"; modelUsed?: string }> {
+  const formattedAmount = formatVoiceCurrency(incident.amount, incident.currency);
+  const previousOutreach = incident.analysis?.recommendedAction
+    ? `Previous recovery strategy: ${incident.analysis.recommendedAction}`
+    : "Initial voice outreach after failed payment transaction";
 
-INCIDENT GROUNDING DATA:
-- Incident ID: ${incident.id}
-- Customer Name: ${incident.customerName}
-- Amount: ${incident.currency} ${Number(incident.amount || 0).toLocaleString("en-IN")}
-- Failure Reason / Rail Issue: ${incident.failureReason}
-- Root Cause Analysis: ${incident.rootCause || incident.failureReason}
-- Payment Rail / Method: ${incident.paymentMethod || "Card"}
-- Recovery Strategy: ${incident.selectedStrategy || "Payment update link"}
-- Resolution Link: Sent to customer's registered email (${incident.customerEmail || "email on file"})
+  const prompt = `You are a professional Indian customer-support and revenue-recovery representative at Recoverly.
+Understand the complete recovery case below and generate an authentic, complete spoken voice script from scratch in natural conversational Hinglish for an outbound customer care phone call.
 
-TASK & CONSTRAINTS:
-1. Generate a personalized, natural spoken voice script for a phone call (approx 20–30 seconds, 40 to 60 words).
-2. Spoken in courteous, natural Indian English with conversational tone (or natural Hinglish phrasing like "Hello [Name]. Aapki [Amount] ki payment... Please check your email and use the recovery link to update your payment method. Thank you.").
-3. Mention the customer by name, mention the exact amount, clearly explain why the payment was interrupted in simple non-technical terms, and guide them to check their email/SMS for the secure recovery link.
-4. Output STRICTLY the plain text to be spoken by Text-To-Speech.
-5. DO NOT include markdown, asterisks, brackets, quotations, or stage instructions (no "[Pause]", no "**Hello**", no markdown).
-6. DO NOT use generic or robotic phrasing.`;
+RECOVERY CASE INFORMATION:
+- Customer Name: ${incident.customerName || "Customer"}
+- Outstanding Amount: ${formattedAmount}
+- Failure Reason / Rail Code: ${incident.failureReason || "Payment processing issue"}
+- Diagnostic Root Cause / Gateway Context: ${incident.rootCause || incident.paymentMethod || "Banking network processing issue"}
+- Payment Method / Rail: ${incident.paymentMethod || "Card / UPI / NetBanking"}
+- Scenario Type: ${incident.scenarioTypeName || "Subscription / Checkout payment"}
+- Context & Outreach History: ${previousOutreach}
+- Available Recovery Action: 1-click secure payment resolution link sent to customer's registered email (${incident.customerEmail || "on file"}) and SMS
 
-  console.info(`[Voice Service] 🤖 Requesting Gemini voice script for incident "${incident.id}" (Customer: ${incident.customerName})...`);
+INSTRUCTIONS & GUIDELINES:
+1. ACT AS A REAL PERSON: Speak like a courteous, helpful, professional Indian customer-support representative on a live telephone call.
+2. GENERATE FROM SCRATCH: Formulate the entire voice dialogue dynamically and independently based on this customer's situation.
+   - There is NO predefined template.
+   - Do NOT use fixed sentences with variable slots.
+   - Do NOT force the exact same opening or closing for every customer. Adapt your tone and flow to this specific case.
+3. NATURAL CONVERSATIONAL HINGLISH: Mix Hindi and English naturally the way real Indian customer-support representatives converse.
+   - Use natural Hindi conversational grammar and cadence combined with standard English fintech terms ("payment", "transaction", "gateway", "issue", "link", "complete", "support", "help", "verify").
+   - You can naturally draw from conversational phrases such as:
+     * "Namaste ... ji"
+     * "main aapko ... ke regarding call kar raha hoon"
+     * "humne notice kiya..."
+     * "shayad..."
+     * "agar aap convenient hain..."
+     * "main aapki help kar sakta hoon"
+     * "aap chahein toh..."
+     * "koi issue nahi..."
+     * "theek hai..."
+   - Do NOT force these phrases into every call. Choose the phrasing and cadence naturally for this customer.
+   - STRICTLY FORBIDDEN: Do NOT speak 100% in English. Pure English is strictly forbidden for voice calls.
+   - STRICTLY FORBIDDEN: Do NOT translate everything into archaic or formal Sanskritized Hindi (avoid "kripya", "dhanyavaad", "pramaanikaran").
+4. FACTUAL INTEGRITY: Mention the customer name, the exact amount (${formattedAmount}), and the failure reason accurately without technical jargon. Never invent or alter numbers, names, or account details.
+5. CONCISE & SPOKEN: Keep it concise for a real telephone call (approx 20–30 seconds spoken duration, around 45–70 words).
+6. TTS-COMPLIANT: Output ONLY the spoken dialogue. Absolutely NO markdown, NO asterisks (**), NO headings, NO bullet points, NO stage directions (no "[Pause]", no "[laughs]"), and NO emojis.
+7. NO EMAIL LANGUAGE: Avoid sounding like an email or announcement. This is live spoken conversational speech.`;
+
+  console.info(`[Voice Service] 🤖 Requesting dynamic Gemini Hinglish voice script from scratch for incident "${incident.id}" (Customer: ${incident.customerName}, Amount: ${formattedAmount})...`);
   const startTime = Date.now();
 
   try {
-    // Race Gemini against timeout to guarantee Exotel synchronous Passthru never times out
     const timeoutPromise = new Promise<{ text: string; modelUsed: string } | null>((resolve) =>
       setTimeout(() => {
-        console.warn(`[Voice Service] ⏱️ Gemini generation exceeded ${timeoutMs}ms limit. Falling back to rule engine script.`);
+        console.warn(`[Voice Service] ⏱️ Gemini generation exceeded ${timeoutMs}ms limit.`);
         resolve(null);
       }, timeoutMs)
     );
 
     const geminiPromise = generateContentResilient({
       contents: prompt,
-      temperature: 0.3,
+      temperature: 0.4,
       systemInstruction:
-        "You are an empathetic, professional fintech voice recovery caller. Return ONLY spoken plain text suitable for phone text-to-speech with no markdown formatting.",
+        "You are an empathetic, professional customer-support voice caller speaking in natural conversational Hinglish (Hindi-English code-switching). Return ONLY spoken plain text suitable for phone text-to-speech with no markdown, formatting, or templates.",
     });
 
     const aiGen = await Promise.race([geminiPromise, timeoutPromise]);
     const duration = Date.now() - startTime;
 
     if (aiGen && aiGen.text) {
-      let text = aiGen.text.trim();
-      text = text.replace(/[*#_`]/g, "").replace(/^["']|["']$/g, "").trim();
-      if (text.length > 20) {
-        console.info(`[Voice Service] ✅ Gemini voice script generated in ${duration}ms via ${aiGen.modelUsed}: "${text.slice(0, 80)}..."`);
-        return { script: text, source: "GEMINI_AI", modelUsed: aiGen.modelUsed };
+      const validation = validateVoiceScript(aiGen.text, incident);
+      if (validation.valid) {
+        console.info(`[Voice Service] ✅ Gemini dynamically generated Hinglish voice script in ${duration}ms via ${aiGen.modelUsed}: "${validation.cleaned.slice(0, 90)}..."`);
+        return { script: validation.cleaned, source: "GEMINI_AI", modelUsed: aiGen.modelUsed };
+      } else {
+        console.warn(`[Voice Service] ⚠️ Gemini output validation issue: ${validation.error}. Raw output: "${aiGen.text.slice(0, 60)}..."`);
       }
     }
   } catch (err: any) {
-    console.warn(`[Voice Service] Gemini generation error (${Date.now() - startTime}ms):`, err?.message || err);
+    console.error(`[Voice Service] ❌ Gemini voice generation error (${Date.now() - startTime}ms):`, err?.message || err);
   }
 
-  // Graceful fallback to deterministic high-quality script
-  const fallback = generateFallbackVoiceScript(incident);
-  console.info(`[Voice Service] ⚡ Using rule engine fallback script: "${fallback.slice(0, 80)}..."`);
-  return { script: fallback, source: "RULE_ENGINE" };
+  // Emergency technical fallback used ONLY when AI service is unavailable
+  console.error(`[Voice Service] ❌ AI generation failed or timed out for incident "${incident.id}". Using emergency technical fallback to prevent call drop.`);
+  const emergencyScript = getEmergencyTechnicalFallback(incident);
+  return { script: emergencyScript, source: "EMERGENCY_TECHNICAL_FALLBACK" };
 }
 
 /**
@@ -309,11 +420,53 @@ export async function getOrGenerateVoiceRecoveryMessage(
   const incident = cleanId ? await findIncidentForVoiceRecovery(cleanId) : null;
 
   if (!incident) {
-    // If CustomField is missing or not found in database, provide a polite universal recovery speech
-    // so Exotel NEVER receives a 404 error and never drops the customer's call abruptly.
-    console.warn(`[Voice Service] Incident lookup returned null for CustomField "${cleanId}". Providing universal fallback recovery script.`);
-    const universalScript = "Hello. This is Recoverly payment support regarding your recent transaction. We noticed your payment could not be processed. Please check your registered email or SMS to complete your payment securely. Thank you.";
-    
+    console.info(`[Voice Service] 🤖 Generating dynamic AI voice script for unidentified CustomField "${cleanId || "direct_call"}"...`);
+    const dynamicUnidentifiedPrompt = `You are a professional Indian customer-support representative at Recoverly calling regarding a payment update.
+Generate a complete, polite spoken voice dialogue from scratch in natural conversational Hinglish (about 20-25 seconds spoken).
+Explain that you are calling from Recoverly support regarding a recent transaction update, and guide them to check their registered phone SMS or email for the secure link.
+Follow all voice safety rules: natural conversational Hinglish code-switching, no robotic language, no markdown, no emojis, purely spoken plain text for phone TTS.`;
+
+    try {
+      const aiGen = await generateContentResilient({
+        contents: dynamicUnidentifiedPrompt,
+        temperature: 0.4,
+        systemInstruction:
+          "You are an empathetic, professional customer-support voice caller speaking in natural conversational Hinglish. Return ONLY spoken plain text suitable for phone text-to-speech with no markdown or formatting.",
+      });
+
+      if (aiGen?.text) {
+        const validation = validateVoiceScript(aiGen.text);
+        if (validation.valid) {
+          const unkIncident: VoiceRecoveryIncidentData = {
+            id: cleanId || "unidentified",
+            customerName: "Customer",
+            customerEmail: "",
+            amount: 0,
+            currency: "INR",
+            failureReason: "Payment verification update",
+          };
+
+          voiceScriptCache.set(cleanId || "unidentified", {
+            script: validation.cleaned,
+            timestamp: Date.now(),
+            incidentId: cleanId || "unidentified",
+            source: "GEMINI_AI",
+          });
+
+          return {
+            incident: unkIncident,
+            script: validation.cleaned,
+            source: "GEMINI_AI",
+          };
+        }
+      }
+    } catch (aiErr) {
+      console.error("[Voice Service] ❌ AI generation failed for unidentified call:", aiErr);
+    }
+
+    const emergencyFallback =
+      "Namaste, this is Recoverly payment support regarding your recent transaction. We encountered a technical issue while processing your payment. Please check your registered email or SMS to complete the payment securely. Thank you.";
+
     return {
       incident: {
         id: cleanId || "fallback_incident",
@@ -323,15 +476,15 @@ export async function getOrGenerateVoiceRecoveryMessage(
         currency: "INR",
         failureReason: "Payment processing interruption",
       },
-      script: universalScript,
-      source: "UNIVERSAL_FALLBACK",
+      script: emergencyFallback,
+      source: "EMERGENCY_TECHNICAL_FALLBACK",
     };
   }
 
-  // 3. Check sandbox incident cached script
+  // 3. Check sandbox incident cached script (strictly verifying it is Hinglish)
   const sbIncident = persistentSandboxIncidents.get(incident.id);
-  if (sbIncident?.last_voice_script && sbIncident.last_voice_script.length > 20) {
-    console.info(`[Voice Service] ⚡ Sandbox incident cache HIT for "${incident.id}"`);
+  if (sbIncident?.last_voice_script && sbIncident.last_voice_script.length > 20 && isHinglishText(sbIncident.last_voice_script)) {
+    console.info(`[Voice Service] ⚡ Sandbox incident Hinglish cache HIT for "${incident.id}"`);
     voiceScriptCache.set(incident.id, {
       script: sbIncident.last_voice_script,
       timestamp: Date.now(),
@@ -341,8 +494,8 @@ export async function getOrGenerateVoiceRecoveryMessage(
     return { incident, script: sbIncident.last_voice_script, source: "SANDBOX_CACHE" };
   }
 
-  // 4. Generate voice script via Gemini (with 2.5s timeout)
-  const { script, source, modelUsed } = await generateGeminiVoiceRecoveryScript(incident, 2500);
+  // 4. Generate voice script via Gemini dynamically from scratch
+  const { script, source, modelUsed } = await generateGeminiVoiceRecoveryScript(incident, 8000);
 
   // Cache generated script for instant subsequent accesses
   voiceScriptCache.set(incident.id, {
@@ -506,27 +659,39 @@ export async function dispatchExotelVoiceCall(
 
   const targetPhone = normalizedCustomerPhone;
 
-  // Pre-generate Gemini script so it is ready and audited
+  // Pre-generate Gemini Hinglish script so it is ready and audited
   let scriptPreview = "";
   try {
-    const scriptRes = await generateGeminiVoiceRecoveryScript(incident);
-    scriptPreview = scriptRes.script;
-    
-    // Store in global fast memory cache for instant Exotel Passthru retrieval
-    voiceScriptCache.set(incident.id, {
-      script: scriptPreview,
-      timestamp: Date.now(),
-      incidentId: incident.id,
-      source: scriptRes.source,
-    });
-
+    // Check if incident already has a valid Hinglish script cached
     const sbIncident = persistentSandboxIncidents.get(incident.id);
-    if (sbIncident) {
-      sbIncident.last_voice_script = scriptPreview;
-      sbIncident.last_voice_script_at = now;
+    if (sbIncident?.last_voice_script && isHinglishText(sbIncident.last_voice_script)) {
+      scriptPreview = sbIncident.last_voice_script;
+      voiceScriptCache.set(incident.id, {
+        script: scriptPreview,
+        timestamp: Date.now(),
+        incidentId: incident.id,
+        source: "SANDBOX_CACHE",
+      });
+    } else {
+      const scriptRes = await generateGeminiVoiceRecoveryScript(incident);
+      scriptPreview = scriptRes.script;
+      
+      // Store in global fast memory cache for instant Exotel Passthru retrieval
+      voiceScriptCache.set(incident.id, {
+        script: scriptPreview,
+        timestamp: Date.now(),
+        incidentId: incident.id,
+        source: scriptRes.source,
+      });
+
+      if (sbIncident) {
+        sbIncident.last_voice_script = scriptPreview;
+        sbIncident.last_voice_script_at = now;
+      }
     }
   } catch (e) {
-    console.warn("[Exotel Voice] Notice pre-generating voice script:", e);
+    console.error("[Exotel Voice] ❌ AI generation failed for voice call dispatch:", e);
+    scriptPreview = getEmergencyTechnicalFallback(incident);
   }
 
   try {

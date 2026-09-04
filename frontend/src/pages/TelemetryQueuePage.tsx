@@ -234,28 +234,42 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
         }}
       >
         <div style={{ flex: 1, minWidth: "280px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px", flexWrap: "wrap" }}>
-            <h1 style={{ fontSize: "24px", fontWeight: 800, margin: 0, color: "#f8fafc", letterSpacing: "-0.5px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "6px", flexWrap: "wrap" }}>
+            <h1 style={{ fontSize: "24px", fontWeight: 800, margin: 0, color: "#0f172a", letterSpacing: "-0.5px" }}>
               Synthetic Telemetry Queue
             </h1>
             <span
               style={{
-                background: "rgba(216, 238, 155, 0.15)",
-                color: "#d8ee9b",
-                border: "1px solid rgba(216, 238, 155, 0.4)",
-                padding: "3px 10px",
-                borderRadius: "12px",
+                background: "#dcfce7",
+                color: "#166534",
+                border: "1px solid #4ade80",
+                padding: "4px 12px",
+                borderRadius: "14px",
                 fontSize: "11px",
-                fontWeight: 700,
+                fontWeight: 800,
                 fontFamily: "'DM Mono', monospace",
-                letterSpacing: "0.5px",
+                letterSpacing: "0.6px",
                 whiteSpace: "nowrap",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                boxShadow: "0 1px 3px rgba(34, 197, 94, 0.15)",
               }}
             >
-              40 DEMO SIGNALS
+              <span
+                style={{
+                  width: "7px",
+                  height: "7px",
+                  borderRadius: "50%",
+                  background: "#22c55e",
+                  boxShadow: "0 0 8px #22c55e",
+                  display: "inline-block",
+                }}
+              />
+              {summary.totalSignals} DEMO SIGNALS
             </span>
           </div>
-          <p style={{ margin: 0, fontSize: "13px", color: "#94a3b8", maxWidth: "840px", lineHeight: "1.5" }}>
+          <p style={{ margin: 0, fontSize: "13.5px", color: "#475569", maxWidth: "840px", lineHeight: "1.5" }}>
             Real-time observable telemetry pipeline. Start AI diagnosis one by one to verify Gemini's ability to classify revenue risk from raw event streams, gateway codes, and session signals.
           </p>
         </div>
@@ -263,37 +277,39 @@ export function TelemetryQueuePage({ onNavigate }: TelemetryQueuePageProps) {
           <button
             onClick={() => setShowCreateModal(true)}
             style={{
-              background: "#1e293b",
-              border: "1px solid #334155",
-              color: "#f1f5f9",
+              background: "#0f172a",
+              border: "1px solid #1e293b",
+              color: "#ffffff",
               padding: "8px 16px",
-              borderRadius: "7px",
+              borderRadius: "8px",
               fontSize: "12.5px",
               fontWeight: 600,
               cursor: "pointer",
               display: "inline-flex",
               alignItems: "center",
               gap: "6px",
+              boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
             }}
           >
-            <span style={{ fontSize: "14px", fontWeight: 700, color: "#d8ee9b" }}>+</span>
+            <span style={{ fontSize: "14px", fontWeight: 800, color: "#4ade80" }}>+</span>
             <span>Custom Signal</span>
           </button>
           <button
             onClick={handleResetQueue}
             title="Reset demo queue back to 40 unanalyzed WAITING items"
             style={{
-              background: "transparent",
-              border: "1px solid #334155",
-              color: "#94a3b8",
+              background: "#ffffff",
+              border: "1px solid #cbd5e1",
+              color: "#334155",
               padding: "8px 14px",
-              borderRadius: "7px",
+              borderRadius: "8px",
               fontSize: "12.5px",
               fontWeight: 600,
               cursor: "pointer",
               display: "inline-flex",
               alignItems: "center",
               gap: "6px",
+              boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
             }}
           >
             <span>↻</span>

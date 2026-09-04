@@ -2,9 +2,10 @@ import { GoogleGenAI } from "@google/genai";
 
 // Supported active Gemini models from official @google/genai guidelines
 export const GEMINI_TEXT_MODELS = [
-  "gemini-3.7-flash",
   "gemini-2.5-flash",
   "gemini-3.1-flash-lite",
+  "gemini-flash-latest",
+  "gemini-3.7-flash",
 ] as const;
 
 let genAIInstance: GoogleGenAI | null = null;

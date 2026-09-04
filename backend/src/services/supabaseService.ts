@@ -434,6 +434,34 @@ function normalizeScenarioKey(raw?: string): string {
   return "INSUFFICIENT_FUNDS";
 }
 
+function isRecoveredStatus(status?: string): boolean {
+  const s = (status || "").toUpperCase().trim();
+  return (
+    s === "RECOVERED" ||
+    s === "RESOLVED" ||
+    s === "PAID" ||
+    s === "SETTLED" ||
+    s === "SETTLED_AND_RECOVERED"
+  );
+}
+
+function isClosedStatus(status?: string): boolean {
+  const s = (status || "").toUpperCase().trim();
+  return s === "CLOSED" || s === "CANCELLED" || s === "DISMISSED";
+}
+
+function isEscalatedStatus(status?: string): boolean {
+  const s = (status || "").toUpperCase().trim();
+  return s === "ESCALATED" || s === "ESCALATED_TO_HUMAN" || s === "HUMAN_REVIEW";
+}
+
+function classifyUnifiedStatus(status?: string): "ACTIVE" | "ESCALATED" | "RECOVERED" | "CLOSED" {
+  if (isRecoveredStatus(status)) return "RECOVERED";
+  if (isClosedStatus(status)) return "CLOSED";
+  if (isEscalatedStatus(status)) return "ESCALATED";
+  return "ACTIVE";
+}
+
 export async function getDashboardSummary(user?: UserProfile) {
   const supabase = getSupabaseClient();
 
@@ -506,14 +534,8 @@ export async function getDashboardSummary(user?: UserProfile) {
   // A. Ingest production recovery cases
   for (const c of dbCases) {
     const scenarioKey = normalizeScenarioKey(c.case_type || c.reason);
-    const amount = Number(c.amount_at_risk) || 0;
-    const status = c.status === "RECOVERED" || c.status === "RESOLVED"
-      ? "RECOVERED"
-      : c.status === "ESCALATED"
-      ? "ESCALATED"
-      : c.status === "CLOSED"
-      ? "CLOSED"
-      : "ACTIVE";
+    const amount = Number(c.amount_at_risk ?? c.amount ?? (c as any).amountAtRisk) || 0;
+    const status = classifyUnifiedStatus(c.status);
 
     unifiedPool.set(c.id, {
       id: c.id,
@@ -528,14 +550,8 @@ export async function getDashboardSummary(user?: UserProfile) {
   // B. Ingest database sandbox incidents
   for (const inc of dbIncidents) {
     const scenarioKey = normalizeScenarioKey(inc.scenario_type || inc.failure_reason);
-    const amount = Number(inc.amount) || 0;
-    const status = inc.status === "RECOVERED" || inc.status === "RESOLVED"
-      ? "RECOVERED"
-      : inc.status === "ESCALATED" || inc.status === "ESCALATED_TO_HUMAN"
-      ? "ESCALATED"
-      : inc.status === "CLOSED"
-      ? "CLOSED"
-      : "ACTIVE";
+    const amount = Number(inc.amount ?? inc.amount_at_risk ?? (inc as any).amountAtRisk) || 0;
+    const status = classifyUnifiedStatus(inc.status);
 
     unifiedPool.set(inc.id, {
       id: inc.id,
@@ -547,25 +563,65 @@ export async function getDashboardSummary(user?: UserProfile) {
     });
   }
 
-  // C. Ingest in-memory sandbox incidents (may have latest live updates)
-  for (const inc of memorySandbox) {
-    const scenarioKey = normalizeScenarioKey(inc.scenario_type || inc.tag || inc.failure_reason);
-    const amount = Number(inc.amount) || 0;
-    const status = inc.status === "RECOVERED" || inc.status === "RESOLVED"
-      ? "RECOVERED"
-      : inc.status === "ESCALATED" || inc.status === "ESCALATED_TO_HUMAN"
-      ? "ESCALATED"
-      : inc.status === "CLOSED"
-      ? "CLOSED"
-      : "ACTIVE";
+  // C. Ingest in-memory sandbox incidents (the exact source of truth used by Operations recovery queue)
+  try {
+    const { persistentSandboxIncidents } = await import("./autonomousRecoveryEngine.js");
+    if (persistentSandboxIncidents) {
+      for (const sb of persistentSandboxIncidents.values()) {
+        if (!canUserAccess(user, sb.owner_id)) continue;
+        const id = sb.id;
+        const amount = Number(sb.amount ?? (sb as any).amount_at_risk ?? (sb as any).amountAtRisk) || 0;
+        const status = classifyUnifiedStatus(sb.status);
+        const scenarioKey = normalizeScenarioKey(
+          sb.scenario_type || sb.scenario_type_name || sb.tag || sb.failure_reason
+        );
 
-    unifiedPool.set(inc.id, {
-      id: inc.id,
+        unifiedPool.set(id, {
+          id,
+          scenarioKey,
+          amount,
+          currency: sb.currency || "INR",
+          status,
+          customerName: sb.customer_name,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[getDashboardSummary] Error reading persistentSandboxIncidents:", err);
+  }
+
+  // Safely normalize any response structures from memorySandbox
+  for (const item of memorySandbox) {
+    const sb = item.record || item.incident || item;
+    const id = sb.id || item.incident?.id || item.id;
+    if (!id) continue;
+    if (user && !canUserAccess(user, sb.owner_id || item.record?.owner_id)) continue;
+
+    const amount = Number(
+      sb.amount ??
+      item.incident?.amount ??
+      sb.amount_at_risk ??
+      item.incident?.amountAtRisk ??
+      (sb as any).amountAtRisk
+    ) || 0;
+    const rawStatus = sb.status || item.incident?.status || item.status;
+    const status = classifyUnifiedStatus(rawStatus);
+    const scenarioKey = normalizeScenarioKey(
+      sb.scenario_type ||
+      item.incident?.scenarioTypeKey ||
+      item.incident?.scenarioTypeName ||
+      sb.tag ||
+      sb.failure_reason ||
+      item.incident?.failureCode
+    );
+
+    unifiedPool.set(id, {
+      id,
       scenarioKey,
       amount,
-      currency: inc.currency || "INR",
+      currency: sb.currency || item.incident?.currency || "INR",
       status,
-      customerName: inc.customer_name,
+      customerName: sb.customer_name || item.customer?.name,
     });
   }
 
@@ -575,14 +631,8 @@ export async function getDashboardSummary(user?: UserProfile) {
       const incId = tel.created_incident_id || tel.id;
       if (!unifiedPool.has(incId)) {
         const scenarioKey = normalizeScenarioKey(tel.title || tel.payment_method);
-        const amount = Number(tel.amount) || 0;
-        const status = tel.status === "RECOVERED"
-          ? "RECOVERED"
-          : tel.status === "ESCALATED"
-          ? "ESCALATED"
-          : tel.status === "CLOSED"
-          ? "CLOSED"
-          : "ACTIVE";
+        const amount = Number(tel.amount ?? tel.amount_at_risk) || 0;
+        const status = classifyUnifiedStatus(tel.status);
 
         unifiedPool.set(incId, {
           id: incId,
@@ -721,6 +771,7 @@ export async function getDashboardSummary(user?: UserProfile) {
 
   return {
     revenueAtRisk: totalRevenueAtRisk,
+    amountAtRisk: totalRevenueAtRisk,
     openRecoveryCases: openRecoveryCases,
     recoveredThisMonth: totalRecovered,
     recoveryRate: Math.min(1, Math.max(0, recoveryRate)),

@@ -1479,6 +1479,7 @@ Your response MUST be a valid JSON object matching this schema exactly:
   ],
   "escalationReason": "Conditions under which automated resolution should pause and route to human revenue operations team",
   "customerMessage": {
+    "voice": "Interactive AI voice dialogue in natural conversational Hinglish generated from scratch for this customer (approx 20-30s spoken, mentioning their situation, amount, and direct guidance with NO fixed templates or canned phrases, suitable for phone TTS with no markdown or formatting)",
     "whatsapp": "High-converting, courteous WhatsApp message with clean formatting and clear 1-click action link (https://pay.recoverly.test/intent/${item.id}).",
     "sms": "Concise, 160-char SMS message with respectful urgency and secure short link.",
     "email": {
@@ -1541,6 +1542,7 @@ Your response MUST be a valid JSON object matching this schema exactly:
       ],
       escalationReason: "Repeated payment rail failure or explicit customer dispute",
       customerMessage: {
+        voice: `Namaste, this is Recoverly billing support regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}. A secure resolution link has been delivered to your registered contact. Thank you.`,
         whatsapp: `Hi ${item.customer_name}, we noticed a brief processing issue with your payment of ${item.currency} ${item.amount.toLocaleString()}. Tap here to complete securely: ${getFrontendRecoveryUrl(item.id)}`,
         sms: `Recoverly: Resolve ${item.currency} ${item.amount.toLocaleString()} payment securely: ${getFrontendRecoveryUrl(item.id)}`,
         email: {
@@ -2494,7 +2496,7 @@ Your response MUST be a valid JSON object matching this schema:
       ],
       escalationReason: "Repeated non-response or max attempt boundary",
       customerMessage: {
-        voice: `Hello ${item.customer_name}, this is Recoverly with an update regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}. We have dispatched a direct payment resolution link to your email.`,
+        voice: `Namaste, this is Recoverly billing support following up on your pending payment of ${item.currency} ${item.amount.toLocaleString()}. Please check your registered email or SMS for resolution details. Thank you.`,
         email: {
           subject: `Follow-up: Resolving your ${item.currency} ${item.amount.toLocaleString()} payment`,
           body: `Dear ${item.customer_name},\n\nWe are following up regarding your pending payment of ${item.currency} ${item.amount.toLocaleString()}.\n\nPlease click below to complete:\n${getFrontendRecoveryUrl(item.id)}\n\nBest regards,\nRecoverly Operations`,
@@ -2950,7 +2952,7 @@ export async function listHumanEscalations(user?: UserProfile) {
             providerErrorMessage: "Subscriber line busy / no answer after 30s ring",
             executedAt: new Date(now.getTime() - 18 * 60000).toISOString(),
             details: "Automated voice agent attempted audio connection via Exotel.",
-            generatedMessage: "Automated outbound voice call initiated via Exotel. Subscriber did not answer.",
+            generatedMessage: 'Automated outbound voice call dispatched via Exotel with Hinglish script: "Namaste Rajesh ji, main Recoverly team se call kar raha hoon. Aapki ₹1,45,000 ki corporate invoice payment complete nahi ho paayi thi. Humne aapke registered email par direct payment link share kiya hai. Thank you." (Status: Subscriber line busy / no answer)',
           },
           {
             attemptNumber: 3,
@@ -3089,6 +3091,7 @@ export async function listHumanEscalations(user?: UserProfile) {
             providerMessageId: "exo_call_66192847",
             executedAt: new Date(now.getTime() - 55 * 60000).toISOString(),
             details: "Dispatched Voice call alert with 24h grace period via Exotel.",
+            generatedMessage: 'Automated outbound voice call dispatched via Exotel with Hinglish script: "Namaste Priya ji, main Recoverly team se call kar raha hoon. Aapki ₹3,499 ki UPI mandate payment verify nahi ho paayi thi. Humne 24-hour grace period activate kiya hai aur direct recovery link share kiya hai. Thank you."',
           },
         ],
         timeline: [

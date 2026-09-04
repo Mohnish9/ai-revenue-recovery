@@ -1135,13 +1135,13 @@ export function AutonomousRecoveryWorkspace({
                 }}
               >
                 <div style={{ fontSize: "11px", fontWeight: 800, color: "#0369a1", textTransform: "uppercase", marginBottom: "6px" }}>
-                  🎙️ AI Voice Spoken Text (Generated Script ~25s)
+                  🎙️ AI Voice Spoken Text (Generated Script ~25s • Natural Hinglish)
                 </div>
                 <div style={{ whiteSpace: "pre-wrap", color: "#1e293b" }}>
                   {voiceDispatch?.messagePreview ||
                     voiceDispatch?.content?.body ||
                     (analysis?.customerMessage as any)?.voice ||
-                    `Hello ${customerName}, this is an automated priority payment notification from Recoverly. Your recent payment of ${incident.incident.currency} ${incident.incident.amount.toLocaleString()} could not be processed due to ${incident.incident.failureCode}. A direct resolution link has been delivered to your email. Thank you.`}
+                    `Namaste ${customerName.split(" ")[0] || "there"} ji, main Recoverly team se call kar raha hoon. Aapki ${incident.incident.currency} ${incident.incident.amount.toLocaleString()} ki payment temporary technical issue ki wajah se complete nahi ho paayi thi. Humne aapke registered contact par secure payment link share kiya hai. Agar aap convenient hain, toh main aapko payment complete karne mein help kar sakta hoon. Thank you.`}
                 </div>
               </div>
             </div>

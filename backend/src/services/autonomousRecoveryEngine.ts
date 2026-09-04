@@ -8,6 +8,9 @@ import { getDetailedChannelReadiness } from "./providerService.js";
 import {
   dispatchExotelVoiceCall,
   getOrGenerateVoiceRecoveryMessage,
+  isHinglishText,
+  generateGeminiVoiceRecoveryScript,
+  validateVoiceScript,
 } from "./voiceRecoveryService.js";
 import { sendExotelSmsRecovery } from "./smsRecoveryService.js";
 import { UserProfile, canUserAccess } from "./dataAccessService.js";
@@ -419,7 +422,7 @@ GENERATE:
 3. "messageGoal": "Direct voice engagement follow-up after Attempt #1 email"
 4. "urgency": "MEDIUM" or "HIGH"
 5. "generatedMessage": {
-     "voiceScript": "Natural, conversational 20-30 second spoken voice script in conversational Indian English / Hinglish tone for ${item.customer_name}, explaining the ${item.currency} ${item.amount.toLocaleString()} payment issue without jargon, and directing them to check their registered email for the secure link."
+     "voiceScript": "Generate the COMPLETE spoken voice script from scratch in natural conversational Hinglish (realistic Hindi-English code-switching as spoken by an Indian customer-support representative) for ${item.customer_name}. Do NOT use any fixed template or hardcoded sentences. Adapt tone naturally to customer situation, accurately mention the amount (${item.currency} ${item.amount.toLocaleString()}), and output ONLY spoken plain text suitable for phone TTS with NO markdown or emojis."
    }
 
 Respond strictly in valid JSON matching this schema:
@@ -430,7 +433,7 @@ Respond strictly in valid JSON matching this schema:
   "urgency": "HIGH",
   "customerContext": "Key insight on voice call reachability",
   "generatedMessage": {
-    "voiceScript": "Hello ${item.customer_name.split(" ")[0] || "there"}, this is Recoverly billing assistant..."
+    "voiceScript": "[Complete dynamic conversational Hinglish dialogue generated from scratch for this customer and case, with no fixed template]"
   },
   "recoveryProbability": 0.74,
   "pspResponseCode": "OUTREACH_200_OK"
@@ -528,7 +531,7 @@ Respond strictly in valid JSON matching this schema:
           ? `Dear ${item.customer_name},\n\nWe encountered a processing issue with your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} on ${item.payment_method}.\n\nReason: ${item.failure_reason}\n\nPlease complete your payment securely via our portal:\n${paymentUrl}\n\nBest regards,\nRecoverly Autonomous Operations`
           : `Dear ${item.customer_name},\n\nThis is a final follow-up regarding the outstanding ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} (${item.failure_reason}). Following our previous email and phone notification, please settle the outstanding balance via ${paymentUrl} to avoid service disruption.\n\nSincerely,\nRecoverly Operations Team`;
 
-      const fallbackVoiceScript = `Hello ${item.customer_name.split(" ")[0] || "there"}. We noticed that your payment of ${item.currency} ${item.amount.toLocaleString()} on ${item.payment_method} could not be processed due to ${item.failure_reason}. Following our initial email, we have sent a secure 1-click update link to your registered email. Please complete settlement to avoid service disruption. Thank you.`;
+      const emergencyVoiceScript = `Namaste, this is Recoverly billing support regarding your pending payment of ${item.currency} ${Number(item.amount || 0).toLocaleString("en-IN")}. A secure resolution link has been delivered to your registered contact. Thank you.`;
 
       aiDecision = {
         recommendedAction: chosenChannel === "VOICE" ? "VOICE_CALL" : (attemptNumber === 1 ? "PAYMENT_LINK" : "RETENTION_OUTREACH"),
@@ -547,7 +550,7 @@ Respond strictly in valid JSON matching this schema:
         generatedMessage: {
           emailSubject: fallbackEmailSub,
           emailBody: fallbackEmailBody,
-          voiceScript: fallbackVoiceScript,
+          voiceScript: emergencyVoiceScript,
         },
         recoveryProbability: attemptNumber === 1 ? 0.85 : attemptNumber === 2 ? 0.74 : 0.62,
         pspResponseCode: "OUTREACH_DISPATCHED_200",
@@ -569,9 +572,37 @@ Respond strictly in valid JSON matching this schema:
         ? `Dear ${item.customer_name},\n\nWe encountered a processing issue with your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()} on ${item.payment_method}.\n\nReason: ${item.failure_reason}\n\nPlease click below to complete your payment:\n${paymentUrl}\n\nThank you,\nRecoverly Operations`
         : `Dear ${item.customer_name},\n\nFollowing our previous email and phone outreach regarding your ${item.scenario_type_name} payment of ${item.currency} ${item.amount.toLocaleString()}, this balance remains pending.\n\nPlease complete payment securely via ${paymentUrl}.\n\nBest regards,\nRecoverly Operations`);
 
-    const voiceScript =
-      genMsg.voiceScript ||
-      `Hello ${item.customer_name.split(" ")[0] || "there"}. We noticed that your payment of ${item.currency} ${item.amount.toLocaleString()} could not be completed due to ${item.failure_reason}. Following our initial email, please use the recovery link sent to your email to complete payment. Thank you.`;
+    let voiceScript = "";
+    if (genMsg.voiceScript) {
+      const val = validateVoiceScript(genMsg.voiceScript, {
+        id: item.id,
+        customerName: item.customer_name,
+        customerEmail: item.customer_email,
+        amount: item.amount,
+        currency: item.currency,
+        failureReason: item.failure_reason,
+      });
+      if (val.valid) {
+        voiceScript = val.cleaned;
+      }
+    }
+
+    // If voice script was not provided or failed validation, dynamically generate it from scratch with Gemini
+    if (!voiceScript && (chosenChannel === "VOICE" || item.analysis?.recommendedAction === "VOICE_CALL")) {
+      console.info(`[AutonomousEngine] 🤖 Generating dynamic Gemini voice script for Attempt #${attemptNumber} (Incident: ${item.id})...`);
+      const dynamicVoiceRes = await generateGeminiVoiceRecoveryScript({
+        id: item.id,
+        customerName: item.customer_name,
+        customerEmail: item.customer_email,
+        amount: item.amount,
+        currency: item.currency,
+        failureReason: item.failure_reason,
+        paymentMethod: item.payment_method,
+        scenarioTypeName: item.scenario_type_name,
+        recommendedAction: `Attempt #${attemptNumber} Voice Call outreach`,
+      });
+      voiceScript = dynamicVoiceRes.script;
+    }
 
     // Persist last voice script for Exotel dynamic script webhook
     item.last_voice_script = voiceScript;

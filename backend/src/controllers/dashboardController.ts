@@ -4,6 +4,9 @@ import { getDashboardSummary, getDebugRecoverySummary } from "../services/supaba
 export async function getDashboard(request: Request, response: Response) {
   try {
     const user = (request as any).user;
+    response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    response.setHeader("Pragma", "no-cache");
+    response.setHeader("Expires", "0");
     response.json(await getDashboardSummary(user));
   } catch (error) {
     response.status(503).json({

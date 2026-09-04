@@ -258,6 +258,7 @@ function AuthenticatedApp() {
           <Dashboard
             onNavigate={navigate}
             onSelectCase={(id) => setSelectedCaseId(id)}
+            onSummaryUpdate={(newSummary) => setSummary(newSummary)}
           />
         )}
         {page === "telemetry-queue" && (

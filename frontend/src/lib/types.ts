@@ -79,6 +79,7 @@ export interface ChannelEfficiencyItem {
 
 export interface DashboardSummary {
   revenueAtRisk: number;
+  amountAtRisk?: number;
   openRecoveryCases: number;
   recoveredThisMonth: number;
   recoveryRate: number;
